@@ -1,8 +1,8 @@
 import 'dart:math';
-import 'package:airbnb_ui_clone/models/destination.dart';
-import 'package:airbnb_ui_clone/ui/screens/main_screen.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/user_session.dart';
-import 'package:airbnb_ui_clone/ui/screens/book_room/widgets/receipt_screen.dart';
+import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/receipt_screen.dart';
 import 'package:flutter/material.dart';
 
 class BookingCheckoutScreen extends StatefulWidget {

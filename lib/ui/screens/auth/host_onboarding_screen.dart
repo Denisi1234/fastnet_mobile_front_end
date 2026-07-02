@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/user_session.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/login_signup_screen.dart';
-import 'package:airbnb_ui_clone/ui/screens/host/host_dashboard.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/login_signup_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/host/host_dashboard.dart';
 
 class HostOnboardingScreen extends StatefulWidget {
   const HostOnboardingScreen({Key? key}) : super(key: key);

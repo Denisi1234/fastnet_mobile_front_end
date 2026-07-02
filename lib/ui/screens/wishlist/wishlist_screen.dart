@@ -1,10 +1,10 @@
-import 'package:airbnb_ui_clone/models/destination.dart';
-import 'package:airbnb_ui_clone/ui/screens/book_room/widgets/book_room.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/user_session.dart';
-import 'package:airbnb_ui_clone/providers/wishlist_provider.dart';
+import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/book_room.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/providers/wishlist_provider.dart';
 import 'package:provider/provider.dart';
-import 'package:airbnb_ui_clone/ui/widgets/destination.dart';
-import 'package:airbnb_ui_clone/ui/widgets/empty_state.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/destination.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/empty_state.dart';
 import 'package:flutter/material.dart';
 
 class WishlistScreen extends StatefulWidget {

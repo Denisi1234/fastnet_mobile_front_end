@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'package:airbnb_ui_clone/models/destination.dart';
-import 'package:airbnb_ui_clone/ui/screens/book_room/widgets/reviews_screen.dart';
-import 'package:airbnb_ui_clone/ui/screens/book_room/widgets/room_selection.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/reviews_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/room_selection.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';

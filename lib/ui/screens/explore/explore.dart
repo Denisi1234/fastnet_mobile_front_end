@@ -1,13 +1,13 @@
 // create nav bar properly later
 
 import 'package:flutter/material.dart';
-import 'package:airbnb_ui_clone/models/destination.dart';
-import 'package:airbnb_ui_clone/ui/screens/explore/widgets/search_results.dart';
-import 'package:airbnb_ui_clone/ui/screens/book_room/widgets/book_room.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/user_session.dart';
-import 'package:airbnb_ui_clone/ui/screens/explore/widgets/tabs.dart';
-import 'package:airbnb_ui_clone/ui/widgets/interactive_card.dart';
-import 'package:airbnb_ui_clone/ui/widgets/fade_slide_page_route.dart';
+import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/explore/widgets/search_results.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/book_room.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/explore/widgets/tabs.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/interactive_card.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/fade_slide_page_route.dart';
 
 
 

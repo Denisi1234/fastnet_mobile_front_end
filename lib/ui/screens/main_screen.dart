@@ -1,15 +1,15 @@
-import 'package:airbnb_ui_clone/ui/screens/explore/explore.dart';
-import 'package:airbnb_ui_clone/ui/screens/host/host_dashboard.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/user_session.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/login_signup_screen.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/host_onboarding_screen.dart';
-import 'package:airbnb_ui_clone/ui/screens/wishlist/wishlist_screen.dart';
-import 'package:airbnb_ui_clone/ui/screens/lodge_services/lodge_services_screen.dart';
-import 'package:airbnb_ui_clone/ui/screens/support/support_help_screen.dart';
-import 'package:airbnb_ui_clone/ui/screens/book_room/widgets/receipt_screen.dart';
-import 'package:airbnb_ui_clone/ui/screens/profile/settings_screen.dart';
-import 'package:airbnb_ui_clone/models/destination.dart';
-import 'package:airbnb_ui_clone/providers/bookings_provider.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/explore/explore.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/host/host_dashboard.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/login_signup_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/host_onboarding_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/wishlist/wishlist_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/lodge_services/lodge_services_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/support/support_help_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/receipt_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/profile/settings_screen.dart';
+import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/providers/bookings_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
 

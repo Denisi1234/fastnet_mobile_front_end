@@ -6,7 +6,7 @@
 // tree, read text, and verify that the values of widget properties are correct.
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:airbnb_ui_clone/main.dart';
+import 'package:fastnet_mobile_front_end/main.dart';
 
 void main() {
   testWidgets('App renders without errors', (WidgetTester tester) async {
@@ -14,7 +14,7 @@ void main() {
     await tester.pumpWidget(const MyApp());
 
     // Verify that the app bar title is present
-    expect(find.text('Airbnb UI Clone'), findsNothing);
+    expect(find.text('FASTNET'), findsNothing);
     expect(find.byType(MyApp), findsOneWidget);
   });
 }

@@ -1,9 +1,9 @@
-import 'package:airbnb_ui_clone/ui/screens/main_screen.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/onboarding_screen.dart';
-import 'package:airbnb_ui_clone/models/app_settings.dart';
-import 'package:airbnb_ui_clone/providers/bookings_provider.dart';
-import 'package:airbnb_ui_clone/providers/wishlist_provider.dart';
-import 'package:airbnb_ui_clone/providers/user_session_provider.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/onboarding_screen.dart';
+import 'package:fastnet_mobile_front_end/models/app_settings.dart';
+import 'package:fastnet_mobile_front_end/providers/bookings_provider.dart';
+import 'package:fastnet_mobile_front_end/providers/wishlist_provider.dart';
+import 'package:fastnet_mobile_front_end/providers/user_session_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
 
@@ -31,7 +31,7 @@ class MyApp extends StatelessWidget {
         final hasSeenOnboarding = context.watch<UserSessionProvider>().hasSeenOnboarding;
         return MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: 'Airbnb UI Clone',
+          title: 'FASTNET',
           theme: ThemeData(fontFamily: 'AirbnbCereal'),
           home: hasSeenOnboarding ? const MainScreen() : const OnboardingScreen(),
         );

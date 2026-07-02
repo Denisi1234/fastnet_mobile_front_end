@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:airbnb_ui_clone/models/destination.dart';
+import 'package:fastnet_mobile_front_end/models/destination.dart';
 
 class SearchFilters {
   final String query;

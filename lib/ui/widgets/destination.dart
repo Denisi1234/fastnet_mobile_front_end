@@ -1,7 +1,7 @@
 // ignore_for_file: public_member_api_docs, sort_constructors_first
-import 'package:airbnb_ui_clone/models/destination.dart';
-import 'package:airbnb_ui_clone/ui/screens/book_room/widgets/book_room.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/book_room.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 import 'package:flutter/material.dart';
 
 class DestinationWidget extends StatefulWidget {

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:airbnb_ui_clone/ui/screens/main_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
 
 class HostBookings extends StatefulWidget {
   const HostBookings({Key? key}) : super(key: key);

@@ -1,5 +1,5 @@
-import 'package:airbnb_ui_clone/ui/screens/lodge_services/lodge_services_data.dart';
-import 'package:airbnb_ui_clone/ui/screens/main_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/lodge_services/lodge_services_data.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
 import 'package:flutter/material.dart';
 
 class LodgeServicesDashboard extends StatefulWidget {

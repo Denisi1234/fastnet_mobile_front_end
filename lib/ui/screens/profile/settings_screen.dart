@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:airbnb_ui_clone/ui/screens/profile/personal_info.dart';
-import 'package:airbnb_ui_clone/ui/screens/profile/payments_payouts.dart';
-import 'package:airbnb_ui_clone/ui/screens/profile/notification_settings.dart';
-import 'package:airbnb_ui_clone/ui/screens/auth/onboarding_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/profile/personal_info.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/profile/payments_payouts.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/profile/notification_settings.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/onboarding_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -94,7 +94,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 30),
             Center(
               child: Text(
-                'Version 1.0.0 (Airbnb Clone)',
+                'Version 1.0.0 (FASTNET)',
                 style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
               ),
             ),

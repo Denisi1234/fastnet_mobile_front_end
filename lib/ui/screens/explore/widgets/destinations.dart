@@ -1,5 +1,5 @@
-import 'package:airbnb_ui_clone/models/destination.dart';
-import 'package:airbnb_ui_clone/ui/widgets/destination.dart';
+import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/destination.dart';
 import 'package:flutter/material.dart';
 
 class Destinations extends StatelessWidget {
