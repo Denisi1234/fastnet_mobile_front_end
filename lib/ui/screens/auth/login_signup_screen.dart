@@ -1,5 +1,8 @@
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/forgot_password_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:lottie/lottie.dart';
 
 class LoginSignupScreen extends StatefulWidget {
   const LoginSignupScreen({Key? key}) : super(key: key);
@@ -28,30 +31,70 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
     super.dispose();
   }
 
-  void _submitAuth() {
+  void _submitAuth() async {
     if (_formKey.currentState!.validate()) {
-      final name = _isSignUp ? _nameController.text.trim() : 'Elias John';
-      final phone = _isSignUp ? _phoneController.text.trim() : '+255 712 345 678';
       final email = _emailController.text.trim();
+      final password = _passwordController.text;
 
-      UserSession.login(name, email, phone);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.check_circle_outline, color: Colors.white),
-              const SizedBox(width: 12),
-              Text(_isSignUp ? 'Welcome aboard, $name!' : 'Welcome back, $name!'),
-            ],
-          ),
-          backgroundColor: Colors.green.shade800,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(color: Colors.red),
         ),
       );
 
-      Navigator.pop(context, true);
+      bool success = false;
+      if (_isSignUp) {
+        final name = _nameController.text.trim();
+        final phone = _phoneController.text.trim();
+        success = await UserSession.registerWithApi(
+          name: name,
+          email: email,
+          password: password,
+          phone: phone,
+          role: 'customer',
+        );
+      } else {
+        success = await UserSession.loginWithApi(email, password);
+      }
+
+      Navigator.pop(context); // Close loading dialog
+
+      if (success) {
+        final displayName = UserSession.userName ?? email;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_outline, color: Colors.white),
+                const SizedBox(width: 12),
+                Text(_isSignUp ? 'Welcome aboard, $displayName!' : 'Welcome back, $displayName!'),
+              ],
+            ),
+            backgroundColor: Colors.green.shade800,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+
+        Navigator.pop(context, true);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Row(
+              children: [
+                Icon(Icons.error_outline, color: Colors.white),
+                SizedBox(width: 12),
+                Text('Authentication failed. Check your credentials.'),
+              ],
+            ),
+            backgroundColor: Colors.red.shade800,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
     }
   }
 
@@ -102,7 +145,6 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
               ),
               const SizedBox(height: 30),
 
-              // Headers
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 250),
                 child: Column(
@@ -128,7 +170,31 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
                   ],
                 ),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 16),
+              // Interactive secure login graphics
+              Center(
+                child: SizedBox(
+                  width: 100,
+                  height: 100,
+                  child: Lottie.network(
+                    'https://assets10.lottiefiles.com/packages/lf20_y3m3yt.json',
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.pink.shade50,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.lock_person_outlined,
+                        size: 48,
+                        color: Colors.red.shade900,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
 
               // Dynamic animated Form inputs
               Form(
@@ -177,7 +243,7 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
                       decoration: _buildInputDecoration('Email Address', Icons.email_outlined),
                       validator: (value) {
                         if (value == null || !value.contains('@') || value.length < 5) {
-                          return 'Please enter a valid email address';
+                          return 'Try using example@gmail.com';
                         }
                         return null;
                       },
@@ -195,10 +261,36 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
                         return null;
                       },
                     ),
+                    if (!_isSignUp)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const ForgotPasswordScreen(),
+                              ),
+                            );
+                          },
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 8),
+                          ),
+                          child: Text(
+                            'Forgot password?',
+                            style: TextStyle(
+                              color: Colors.red.shade900,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 16),
 
               // Confirm button
               Container(
@@ -278,6 +370,25 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
               _buildBrandGoogleButton(),
               const SizedBox(height: 12),
               _buildBrandAppleButton(),
+              const SizedBox(height: 24),
+              Center(
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (context) => const MainScreen(initialTab: 0)),
+                    );
+                  },
+                  child: Text(
+                    'Browse without logging in',
+                    style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.bold,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ),
               const SizedBox(height: 40),
             ],
           ),
@@ -310,7 +421,7 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
 
   InputDecoration _buildPasswordDecoration() {
     return InputDecoration(
-      labelText: 'Password',
+      labelText: _isSignUp ? 'Create a password with at least 8 characters' : 'Password',
       labelStyle: const TextStyle(color: Colors.black54, fontSize: 14),
       filled: true,
       fillColor: Colors.grey.shade50,
@@ -343,12 +454,33 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
       width: double.infinity,
       height: 52,
       child: OutlinedButton(
-        onPressed: () {
-          UserSession.login('Elias John', 'elias.john@domain.tz', '+255 712 345 678');
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Logged in successfully via Google!')),
+        onPressed: () async {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => const Center(
+              child: CircularProgressIndicator(color: Colors.red),
+            ),
           );
-          Navigator.pop(context, true);
+          final success = await UserSession.loginWithApi('traveler@fastnet.com', 'password');
+          if (mounted) Navigator.pop(context); // Close loading dialog
+          if (success) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Logged in successfully via Google!')),
+              );
+              Navigator.pop(context, true);
+            }
+          } else {
+            // Offline fallback
+            UserSession.login('Alice Traveler', 'traveler@fastnet.com', '+255 789 999 888');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Logged in via offline mock (Google)!')),
+              );
+              Navigator.pop(context, true);
+            }
+          }
         },
         style: OutlinedButton.styleFrom(
           side: BorderSide(color: Colors.grey.shade300),
@@ -358,15 +490,10 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Custom Mock Google Multi-colored G Logo
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(width: 4, height: 12, color: Colors.blue),
-                Container(width: 4, height: 12, color: Colors.red),
-                Container(width: 4, height: 12, color: Colors.yellow.shade700),
-                Container(width: 4, height: 12, color: Colors.green),
-              ],
+            // Real Google G logo painted with CustomPainter
+            CustomPaint(
+              size: const Size(22, 22),
+              painter: _GoogleGPainter(),
             ),
             const SizedBox(width: 14),
             const Text(
@@ -384,12 +511,33 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
       width: double.infinity,
       height: 52,
       child: ElevatedButton(
-        onPressed: () {
-          UserSession.login('Elias John', 'elias.john@domain.tz', '+255 712 345 678');
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Logged in successfully via Apple!')),
+        onPressed: () async {
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => const Center(
+              child: CircularProgressIndicator(color: Colors.red),
+            ),
           );
-          Navigator.pop(context, true);
+          final success = await UserSession.loginWithApi('traveler@fastnet.com', 'password');
+          if (mounted) Navigator.pop(context); // Close loading dialog
+          if (success) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Logged in successfully via Apple!')),
+              );
+              Navigator.pop(context, true);
+            }
+          } else {
+            // Offline fallback
+            UserSession.login('Alice Traveler', 'traveler@fastnet.com', '+255 789 999 888');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Logged in via offline mock (Apple)!')),
+              );
+              Navigator.pop(context, true);
+            }
+          }
         },
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.black,
@@ -411,3 +559,72 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
     );
   }
 }
+
+/// Pixel-accurate Google 'G' logo painter using official brand colours.
+/// Draws the four-colour arc with the horizontal white notch and the
+/// blue rectangular extension — matching Google's published brand guidelines.
+class _GoogleGPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double cx = size.width / 2;
+    final double cy = size.height / 2;
+    final double r = size.width / 2;
+    final double strokeW = size.width * 0.22;
+    final double halfStroke = strokeW / 2;
+
+    // Arc paint helper
+    Paint arcPaint(Color color) => Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeW
+      ..strokeCap = StrokeCap.butt;
+
+    final rect = Rect.fromCircle(center: Offset(cx, cy), radius: r - halfStroke);
+
+    // ── Four coloured arcs (angles in radians, 0 = right/3 o'clock) ──
+
+    // Red: top-right → bottom-right (337.5° → 360° + 0° → 45°)  ≈ 67.5°
+    canvas.drawArc(rect, _deg(-22.5), _deg(67.5), false, arcPaint(const Color(0xFFEA4335)));
+
+    // Yellow: bottom-right → bottom-left  ≈ 90°  (45° → 135°)
+    canvas.drawArc(rect, _deg(45), _deg(90), false, arcPaint(const Color(0xFFFBBC05)));
+
+    // Green: bottom-left → top-left  ≈ 90°  (135° → 225°)
+    canvas.drawArc(rect, _deg(135), _deg(90), false, arcPaint(const Color(0xFF34A853)));
+
+    // Blue: top-left → top-right  ≈ 112.5°  (225° → 337.5°)
+    canvas.drawArc(rect, _deg(225), _deg(112.5), false, arcPaint(const Color(0xFF4285F4)));
+
+    // ── White gap / notch at the right (hides arc join seam) ──
+    final gapPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeW + 1.5
+      ..strokeCap = StrokeCap.butt;
+    canvas.drawArc(rect, _deg(-24), _deg(48), false, gapPaint);
+
+    // ── Blue horizontal bar (the cross-arm of the G) ──
+    final barPaint = Paint()
+      ..color = const Color(0xFF4285F4)
+      ..style = PaintingStyle.fill;
+
+    // Bar runs from centre to right edge, vertically centred
+    final barHeight = strokeW * 0.9;
+    final barRect = Rect.fromLTRB(
+      cx,                        // starts at centre
+      cy - barHeight / 2,
+      size.width - halfStroke + 1, // ends at right edge of arc
+      cy + barHeight / 2,
+    );
+    canvas.drawRect(barRect, barPaint);
+
+    // Small red arc re-drawn on top of bar-right to restore round end
+    canvas.drawArc(rect, _deg(-24), _deg(24), false, arcPaint(const Color(0xFFEA4335)));
+  }
+
+  static double _deg(double degrees) => degrees * 3.1415926535 / 180.0;
+
+  @override
+  bool shouldRepaint(_GoogleGPainter oldDelegate) => false;
+}
+

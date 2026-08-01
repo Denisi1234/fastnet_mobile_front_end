@@ -1,7 +1,12 @@
-import 'dart:math';
+import 'dart:async';
+import 'dart:math' hide Point;
+import 'dart:ui' as ui;
+import 'package:flutter/services.dart' show ByteData, Uint8List;
 import 'package:fastnet_mobile_front_end/models/destination.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/book_room.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 import 'package:flutter/material.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' hide Size;
 import 'filter_bottom_sheet.dart';
 import 'package:fastnet_mobile_front_end/ui/widgets/interactive_card.dart';
 import 'package:fastnet_mobile_front_end/ui/widgets/fade_slide_page_route.dart';
@@ -33,16 +38,185 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
   bool _isMapView = false;
   String _selectedSort = 'Best Match';
   late ScrollController _scrollController;
+  late PageController _pageController;
   int _loadedItemsCount = 4;
   bool _isLoadingMore = false;
   int _selectedMapLodgeIndex = 0;
+
+  MapboxMap? _mapController;
+  PointAnnotationManager? _pointAnnotationManager;
+  final Map<String, int> _symbolToLodgeIndex = {};
+  Cancelable? _tapSubscription;
+  bool _styleLoaded = false;
+  List<Destination>? _previousList;
+  int? _previousSelectedLodgeIndex;
+ 
+  LodgeFilterOptions _filterOptions = const LodgeFilterOptions(
+    priceRange: RangeValues(0, 200000),
+    minRating: 0,
+    freeCancellation: false,
+    selectedAmenities: {},
+    selectedNeighborhoods: {},
+  );
+
+  final Set<String> _activeFilters = {};
+
+  void _zoomIn() {
+    _mapController?.getCameraState().then((state) {
+      _mapController?.setCamera(CameraOptions(zoom: state.zoom + 1));
+    });
+  }
+
+  void _zoomOut() {
+    _mapController?.getCameraState().then((state) {
+      _mapController?.setCamera(CameraOptions(zoom: state.zoom - 1));
+    });
+  }
+
+  void _reCenter(List<Destination> sortedList) {
+    if (sortedList.isEmpty) return;
+    final activeLodge = sortedList[_selectedMapLodgeIndex % sortedList.length];
+    _mapController?.flyTo(
+      CameraOptions(
+        center: Point(coordinates: Position(activeLodge.longitude, activeLodge.latitude)),
+        zoom: 13.0,
+      ),
+      MapAnimationOptions(duration: 800),
+    );
+  }
+
+  void _animateToLodge(int index, List<Destination> sortedList) {
+    if (index >= 0 && index < sortedList.length) {
+      final lodge = sortedList[index];
+      _mapController?.flyTo(
+        CameraOptions(
+          center: Point(coordinates: Position(lodge.longitude, lodge.latitude)),
+          zoom: 13.0,
+        ),
+        MapAnimationOptions(duration: 800),
+      );
+    }
+  }
+
+  final Map<int, Uint8List> _pinCache = {};
+
+  final List<Color> _markerColors = const [
+    Color(0xFFE53935), // Crimson Red
+    Color(0xFF1565C0), // Royal Blue
+    Color(0xFF2E7D32), // Emerald Green
+    Color(0xFF6A1B9A), // Rich Purple
+    Color(0xFFEF6C00), // Vibrant Amber
+    Color(0xFF00838F), // Deep Teal
+    Color(0xFFC2185B), // Berry Magenta
+    Color(0xFF283593), // Indigo
+  ];
+
+  Future<Uint8List> _getTeardropPinBytes({required Color pinColor}) async {
+    final int key = pinColor.toARGB32();
+    if (_pinCache.containsKey(key)) return _pinCache[key]!;
+
+    final ui.PictureRecorder recorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(recorder);
+    const double width = 120.0;
+    const double height = 150.0;
+
+    final Paint pinPaint = Paint()
+      ..color = pinColor
+      ..style = PaintingStyle.fill;
+
+    final Paint borderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 5.0;
+
+    final Paint dotPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+
+    final Path path = Path();
+    const Offset center = Offset(60, 55);
+    path.addOval(Rect.fromCircle(center: center, radius: 44));
+    path.moveTo(20, 70);
+    path.lineTo(60, 142);
+    path.lineTo(100, 70);
+    path.close();
+
+    canvas.drawPath(path, pinPaint);
+    canvas.drawPath(path, borderPaint);
+    canvas.drawCircle(center, 16.0, dotPaint);
+
+    final ui.Image image = await recorder.endRecording().toImage(width.toInt(), height.toInt());
+    final ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    final Uint8List result = byteData!.buffer.asUint8List();
+
+    _pinCache[key] = result;
+    return result;
+  }
+
+  void _updateMapMarkers(List<Destination> sortedList) async {
+    if (_mapController == null || _pointAnnotationManager == null) return;
+    try {
+      await _pointAnnotationManager!.deleteAll();
+      _symbolToLodgeIndex.clear();
+
+      for (int i = 0; i < sortedList.length; i++) {
+        final lodge = sortedList[i];
+        final isSelected = _selectedMapLodgeIndex == i;
+        final Color pinColor = isSelected ? const Color(0xFFFF385C) : _markerColors[i % _markerColors.length];
+        final pinBytes = await _getTeardropPinBytes(pinColor: pinColor);
+
+        final annotation = await _pointAnnotationManager!.create(
+          PointAnnotationOptions(
+            geometry: Point(coordinates: Position(lodge.longitude, lodge.latitude)),
+            image: pinBytes,
+            iconSize: isSelected ? 1.25 : 0.9,
+            textField: lodge.name,
+            textSize: isSelected ? 11.5 : 10.0,
+            textColor: isSelected ? const Color(0xFFFF385C).toARGB32() : const Color(0xFF0F172A).toARGB32(),
+            textHaloColor: Colors.white.toARGB32(),
+            textHaloWidth: 2.0,
+            textOffset: const [0.0, 1.0],
+            textAnchor: TextAnchor.TOP,
+          ),
+        );
+        _symbolToLodgeIndex[annotation.id] = i;
+      }
+    } catch (e) {
+      // Ignore map exceptions on fast UI rebuilds
+    }
+  }
+
+  void _showFilterFeedback(int count) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.filter_list_rounded, color: Colors.white, size: 18),
+            const SizedBox(width: 10),
+            Text(
+              'Filters Updated • $count lodges match',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.red.shade900,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(milliseconds: 1400),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
+        margin: const EdgeInsets.fromLTRB(24, 0, 24, 80),
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
-    Future.delayed(const Duration(milliseconds: 1200), () {
+    _pageController = PageController(viewportFraction: 0.88, initialPage: _selectedMapLodgeIndex);
+    Future.delayed(const Duration(milliseconds: 350), () {
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -53,8 +227,10 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
 
   @override
   void dispose() {
+    _tapSubscription?.cancel();
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -78,7 +254,48 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
   }
 
   List<Destination> _getSortedDestinations() {
-    final list = List<Destination>.from(widget.filteredDestinations);
+    var list = List<Destination>.from(widget.filteredDestinations);
+
+    // Apply quick filters dynamically
+    if (_activeFilters.contains('Top Rated (4.7+)')) {
+      list = list.where((d) => d.rating >= 4.7).toList();
+    }
+    if (_activeFilters.contains('Budget (≤ 80k)')) {
+      list = list.where((d) => d.price <= 80000).toList();
+    }
+    if (_activeFilters.contains('AC')) {
+      list = list.where((d) => d.amenities.any((a) => a.toLowerCase().contains('air conditioning') || a.toLowerCase().contains('ac'))).toList();
+    }
+    if (_activeFilters.contains('Pool')) {
+      list = list.where((d) => d.amenities.any((a) => a.toLowerCase().contains('pool'))).toList();
+    }
+    if (_activeFilters.contains('Breakfast')) {
+      list = list.where((d) => d.amenities.any((a) => a.toLowerCase().contains('breakfast'))).toList();
+    }
+
+    // Apply advanced bottom sheet filters
+    list = list.where((d) {
+      if (d.price < _filterOptions.priceRange.start || d.price > _filterOptions.priceRange.end) {
+        return false;
+      }
+      if (_filterOptions.minRating > 0 && d.rating < _filterOptions.minRating) {
+        return false;
+      }
+      if (_filterOptions.selectedAmenities.isNotEmpty) {
+        final matchesAll = _filterOptions.selectedAmenities.every((amenity) {
+          return d.amenities.any((a) => a.toLowerCase().trim() == amenity.toLowerCase().trim());
+        });
+        if (!matchesAll) return false;
+      }
+      if (_filterOptions.selectedNeighborhoods.isNotEmpty) {
+        final matchesAny = _filterOptions.selectedNeighborhoods.any((area) {
+          return d.area.toLowerCase().trim() == area.toLowerCase().trim() || d.city.toLowerCase().trim() == area.toLowerCase().trim();
+        });
+        if (!matchesAny) return false;
+      }
+      return true;
+    }).toList();
+
     if (_selectedSort == 'Price: low to high') {
       list.sort((a, b) => a.price.compareTo(b.price));
     } else if (_selectedSort == 'Price: high to low') {
@@ -139,170 +356,242 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
       },
     );
   }
-
   Widget _buildMapView(List<Destination> sortedList) {
     if (sortedList.isEmpty) {
       return const Center(child: Text('No lodges available to show on map'));
     }
-    final activeLodge = sortedList[_selectedMapLodgeIndex % sortedList.length];
+    if (_selectedMapLodgeIndex >= sortedList.length) {
+      _selectedMapLodgeIndex = 0;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_pageController.hasClients) {
+          _pageController.jumpToPage(0);
+        }
+      });
+    }
+    final activeLodge = sortedList[_selectedMapLodgeIndex];
+
+    // Trigger update of map markers in post frame callback if list or selection changed
+    if (_styleLoaded && (_previousList != sortedList || _previousSelectedLodgeIndex != _selectedMapLodgeIndex)) {
+      _previousList = sortedList;
+      _previousSelectedLodgeIndex = _selectedMapLodgeIndex;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _updateMapMarkers(sortedList);
+      });
+    }
 
     return Stack(
       children: [
-        // Mock Map Canvas background
+        // Real Mapbox Map background
         Container(
-          color: const Color(0xFFF1F8E9),
           width: double.infinity,
           height: double.infinity,
-          child: CustomPaint(
-            painter: MapGridPainter(),
+          child: MapWidget(
+            key: const ValueKey("searchResultsMapWidget"),
+            cameraOptions: CameraOptions(
+              center: Point(coordinates: Position(activeLodge.longitude, activeLodge.latitude)),
+              zoom: 13.0,
+            ),
+            styleUri: MapboxStyles.MAPBOX_STREETS,
+            onMapCreated: (mapboxMap) {
+              _mapController = mapboxMap;
+              mapboxMap.annotations.createPointAnnotationManager().then((manager) {
+                _pointAnnotationManager = manager;
+                _styleLoaded = true;
+                _updateMapMarkers(sortedList);
+                
+                _tapSubscription?.cancel();
+                _tapSubscription = manager.tapEvents(onTap: (annotation) {
+                  final index = _symbolToLodgeIndex[annotation.id];
+                  if (index != null) {
+                    setState(() {
+                      _selectedMapLodgeIndex = index;
+                    });
+                    _animateToLodge(index, sortedList);
+                    _updateMapMarkers(sortedList);
+                    if (_pageController.hasClients) {
+                      _pageController.animateToPage(
+                        index,
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                      );
+                    }
+                  }
+                });
+              });
+            },
           ),
         ),
-        // Pins overlay
-        ...List.generate(sortedList.length, (index) {
-          final lodge = sortedList[index];
-          final randX = ((lodge.name.hashCode & 0xFFFF) % 100) / 100.0;
-          final randY = (((lodge.name.hashCode >> 8) & 0xFFFF) % 100) / 100.0;
-          
-          final left = 40.0 + randX * 240.0;
-          final top = 60.0 + randY * 260.0;
-          
-          final isSelected = _selectedMapLodgeIndex == index;
+        
+        // Polished unified map controls on right side
+        Positioned(
+          right: 16,
+          top: 16,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.14),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  onPressed: _zoomIn,
+                  icon: const Icon(Icons.add, color: Colors.black87, size: 20),
+                  splashRadius: 20,
+                  tooltip: 'Zoom In',
+                ),
+                Container(
+                  width: 24,
+                  height: 1,
+                  color: Colors.grey.shade200,
+                ),
+                IconButton(
+                  onPressed: _zoomOut,
+                  icon: const Icon(Icons.remove, color: Colors.black87, size: 20),
+                  splashRadius: 20,
+                  tooltip: 'Zoom Out',
+                ),
+                Container(
+                  width: 24,
+                  height: 1,
+                  color: Colors.grey.shade200,
+                ),
+                IconButton(
+                  onPressed: () => _reCenter(sortedList),
+                  icon: const Icon(Icons.my_location_rounded, color: Colors.black87, size: 18),
+                  splashRadius: 20,
+                  tooltip: 'Re-Center',
+                ),
+              ],
+            ),
+          ),
+        ),
 
-          return Positioned(
-            left: left,
-            top: top,
-            child: GestureDetector(
-              onTap: () {
+        // Floating bottom listing preview card in map view
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 20,
+          child: Container(
+            height: 125,
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: sortedList.length,
+              onPageChanged: (index) {
                 setState(() {
                   _selectedMapLodgeIndex = index;
                 });
+                _animateToLodge(index, sortedList);
+                _updateMapMarkers(sortedList);
               },
-              child: AnimatedScale(
-                scale: isSelected ? 1.2 : 1.0,
-                duration: const Duration(milliseconds: 200),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: isSelected ? Colors.red.shade900 : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: isSelected ? Colors.white : Colors.red.shade900, width: 1.5),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.12),
-                        blurRadius: 6,
-                        offset: const Offset(0, 3),
-                      )
-                    ],
-                  ),
-                  child: Text(
-                    'TSh ${(lodge.price ~/ 1000)}k',
-                    style: TextStyle(
-                      color: isSelected ? Colors.white : Colors.black87,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          );
-        }),
-        // Floating bottom listing preview card in map view
-        Positioned(
-          left: 20,
-          right: 20,
-          bottom: 20,
-          child: Container(
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                )
-              ],
-            ),
-            child: Row(
-              children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.horizontal(left: Radius.circular(16)),
-                  child: Image.asset(
-                    activeLodge.imageUrl,
-                    width: 120,
-                    height: double.infinity,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              activeLodge.name,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              '${activeLodge.area}, ${activeLodge.city}',
-                              style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                            ),
-                            const SizedBox(height: 3),
-                            Row(
-                              children: [
-                                const Icon(Icons.star, size: 12, color: Colors.amber),
-                                const SizedBox(width: 4),
-                                Text(activeLodge.rating.toString(), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                          ],
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'TSh ${activeLodge.price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}',
-                              style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold, fontSize: 13),
-                            ),
-                            InkWell(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  FadeSlidePageRoute(
-                                    page: BookRoom(
-                                      destination: activeLodge,
-                                      selectedDatesText: widget.selectedDatesText,
-                                      numNights: widget.numNights,
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: Colors.black87,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Text('View', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                              ),
-                            )
-                          ],
+              itemBuilder: (context, index) {
+                final lodge = sortedList[index];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.12),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
                         )
                       ],
                     ),
+                    child: Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: const BorderRadius.horizontal(left: Radius.circular(16)),
+                          child: Image.asset(
+                            lodge.imageUrl,
+                            width: 120,
+                            height: double.infinity,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      lodge.name,
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      '${lodge.area}, ${lodge.city}',
+                                      style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Row(
+                                      children: [
+                                        const Icon(Icons.star, size: 12, color: Colors.amber),
+                                        const SizedBox(width: 4),
+                                        Text(lodge.rating.toString(), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'TSh ${lodge.price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}',
+                                      style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
+                                    InkWell(
+                                      onTap: () {
+                                        Navigator.push(
+                                          context,
+                                          FadeSlidePageRoute(
+                                            page: BookRoom(
+                                              destination: lodge,
+                                              selectedDatesText: widget.selectedDatesText,
+                                              numNights: widget.numNights,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.shade900,
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: const Text(
+                                          'Book',
+                                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                )
-              ],
+                );
+              },
             ),
           ),
         )
@@ -314,254 +603,263 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
     return 'TSh ${price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}';
   }
 
-  Widget _buildTagChip(Destination destination) {
-    String tagText = 'Popular Choice';
-    IconData tagIcon = Icons.thumb_up_alt_outlined;
-    Color chipBg = Colors.blue.shade50;
-    Color chipFg = Colors.blue.shade800;
-
-    if (destination.rating >= 4.7) {
-      tagText = 'Top Rated';
-      tagIcon = Icons.star;
-      chipBg = Colors.green.shade50;
-      chipFg = Colors.green.shade800;
-    } else if (destination.price <= 50000) {
-      tagText = 'Best Value';
-      tagIcon = Icons.local_offer_outlined;
-      chipBg = Colors.orange.shade50;
-      chipFg = Colors.orange.shade900;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: chipBg,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(tagIcon, size: 12, color: chipFg),
-          const SizedBox(width: 4),
-          Text(
-            tagText,
-            style: TextStyle(
-              color: chipFg,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final title = widget.searchQuery.isEmpty ? 'All Areas' : widget.searchQuery;
     final sortedList = _getSortedDestinations();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header: Back button, Title, Subtitle, Filter & Sort
-            Padding(
-              padding: const EdgeInsets.only(left: 10, right: 20, top: 10, bottom: 15),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Colors.black, size: 28),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  const SizedBox(height: 5),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                title,
-                                style: const TextStyle(
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black87,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '${sortedList.length} Lodges found',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey.shade600,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 1. Royal Blue Header Banner with Floating Search Box Pill
+          Container(
+            decoration: const BoxDecoration(
+              color: Color(0xFF003580), // Signature Royal Deep Blue
+            ),
+            child: Column(
+              children: [
+                SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFFB700), width: 2), // Golden Accent Border
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.12),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
                           ),
-                        ),
-                        // Filter and Sort buttons
-                        Row(
-                          children: [
-                            _buildHeaderButton(Icons.tune_outlined, 'Filter', () {
-                              showModalBottomSheet(
-                                context: context,
-                                isScrollControlled: true,
-                                backgroundColor: Colors.white,
-                                shape: const RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.black87, size: 18),
+                            onPressed: () => Navigator.pop(context),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  title,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                builder: (_) => const FilterBottomSheet(),
-                              );
-                            }),
-                            const SizedBox(width: 8),
-                            _buildHeaderButton(Icons.swap_vert_outlined, 'Sort: $_selectedSort', _showSortBottomSheet),
-                          ],
-                        ),
-                      ],
+                                const SizedBox(height: 2),
+                                Text(
+                                  widget.selectedDatesText,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade600,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ],
-              ),
-            ),
-
-            // Scrollable list or Map view of lodge cards
-            Expanded(
-              child: _isLoading
-                  ? ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                      itemCount: 3,
-                      separatorBuilder: (context, index) => const SizedBox(height: 16),
-                      itemBuilder: (context, index) => _buildSkeletonCard(),
-                    )
-                  : sortedList.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.search_off_rounded, size: 64, color: Colors.grey.shade400),
-                              const SizedBox(height: 16),
-                              const Text(
-                                'No Lodges Found',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black54,
+                ),
+                // 3 Action Toolbar (Trier / Filtrer / Carte)
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border(
+                      bottom: BorderSide(color: Colors.grey.shade200),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: InkWell(
+                          onTap: _showSortBottomSheet,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.swap_vert_rounded, size: 20, color: Colors.black87),
+                                const SizedBox(width: 6),
+                                const Text(
+                                  'Sort',
+                                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
                                 ),
-                              ),
-                              const SizedBox(height: 8),
-                              const Text(
-                                'Try looking for Dodoma, Mtumba, or Sabasaba.',
-                                style: TextStyle(color: Colors.grey),
-                              ),
-                            ],
-                          ),
-                        )
-                      : _isMapView
-                          ? _buildMapView(sortedList)
-                          : ListView.separated(
-                              controller: _scrollController,
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                              itemCount: min(_loadedItemsCount, sortedList.length) + (_loadedItemsCount < sortedList.length ? 1 : 1),
-                              separatorBuilder: (context, index) => const SizedBox(height: 16),
-                              itemBuilder: (context, index) {
-                                if (index >= min(_loadedItemsCount, sortedList.length)) {
-                                  // Shimmer loaders or end message
-                                  if (_loadedItemsCount < sortedList.length) {
-                                    return const Padding(
-                                      padding: EdgeInsets.symmetric(vertical: 20),
-                                      child: Center(
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
-                                        ),
-                                      ),
-                                    );
-                                  } else {
-                                    return Padding(
-                                      padding: const EdgeInsets.symmetric(vertical: 20),
-                                      child: Center(
-                                        child: Text(
-                                          "You've viewed all matching properties.",
-                                          style: TextStyle(color: Colors.grey.shade500, fontSize: 13, fontWeight: FontWeight.w500),
-                                        ),
-                                      ),
-                                    );
-                                  }
-                                }
-                                final lodge = sortedList[index];
-                                return _buildLodgeCard(context, lodge);
-                              },
+                              ],
                             ),
+                          ),
+                        ),
+                      ),
+                      Container(height: 28, width: 1, color: Colors.grey.shade300),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () async {
+                            final result = await showModalBottomSheet<LodgeFilterOptions>(
+                              context: context,
+                              isScrollControlled: true,
+                              backgroundColor: Colors.white,
+                              shape: const RoundedRectangleBorder(
+                                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                              ),
+                              builder: (_) => FilterBottomSheet(initialOptions: _filterOptions),
+                            );
+                            if (result != null) {
+                              setState(() {
+                                _filterOptions = result;
+                                _loadedItemsCount = 4;
+                              });
+                              _showFilterFeedback(_getSortedDestinations().length);
+                            }
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.tune_rounded, size: 20, color: Colors.black87),
+                                const SizedBox(width: 6),
+                                const Text(
+                                  'Filter',
+                                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      Container(height: 28, width: 1, color: Colors.grey.shade300),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () {
+                            setState(() {
+                              _isMapView = !_isMapView;
+                            });
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(_isMapView ? Icons.format_list_bulleted_rounded : Icons.location_on_rounded, size: 20, color: Colors.black87),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _isMapView ? 'List' : 'Map',
+                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          setState(() {
-            _isMapView = !_isMapView;
-          });
-        },
-        backgroundColor: Colors.black87,
-        label: Text(
-          _isMapView ? 'List' : 'Map',
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-        ),
-        icon: Icon(_isMapView ? Icons.list : Icons.map, color: Colors.white, size: 18),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-    );
-  }
+          ),
 
-  Widget _buildHeaderButton(IconData icon, String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.grey.shade300),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.03),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            )
-          ],
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 16, color: Colors.black87),
-            const SizedBox(width: 6),
-            Text(
-              label,
+          // Results Counter Header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text(
+              '${sortedList.length} stays found',
               style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF0F172A),
               ),
             ),
-          ],
-        ),
+          ),
+
+          // Cards List / Map View
+          Expanded(
+            child: _isLoading
+                ? ListView.separated(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    itemCount: 3,
+                    separatorBuilder: (context, index) => const SizedBox(height: 14),
+                    itemBuilder: (context, index) => _buildSkeletonCard(),
+                  )
+                : sortedList.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.search_off_rounded, size: 64, color: Colors.grey.shade400),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No Stays Found',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black54,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Try looking for Dar es Salaam, Masaki, or Arusha.',
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      )
+                    : _isMapView
+                        ? _buildMapView(sortedList)
+                        : ListView.separated(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            itemCount: min(_loadedItemsCount, sortedList.length) + (_loadedItemsCount < sortedList.length ? 1 : 1),
+                            separatorBuilder: (context, index) => const SizedBox(height: 14),
+                            itemBuilder: (context, index) {
+                              if (index >= min(_loadedItemsCount, sortedList.length)) {
+                                if (_loadedItemsCount < sortedList.length) {
+                                  return _buildSkeletonCard();
+                                } else {
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 20),
+                                    child: Center(
+                                      child: Text(
+                                        "You've viewed all matching properties.",
+                                        style: TextStyle(color: Colors.grey.shade500, fontSize: 13, fontWeight: FontWeight.w500),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              }
+                              final lodge = sortedList[index];
+                              return _buildLodgeCard(context, lodge);
+                            },
+                          ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildLodgeCard(BuildContext context, Destination lodge) {
-    // Custom rating count generation for screenshot accuracy
-    final int reviewsCount = (lodge.rating * 17).floor();
+    final int reviewsCount = (lodge.rating * 42).floor();
+    final bool isWishlisted = WishlistData.contains(lodge);
 
     return InteractiveCard(
       onTap: () {
@@ -577,38 +875,72 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
         );
       },
       child: Container(
-        height: 160,
+        height: 225,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: Colors.grey.shade200),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Left Image: Rounded corners with carousel
-            Padding(
-              padding: const EdgeInsets.all(10.0),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 140,
-                  height: double.infinity,
-                  child: CardImageCarousel(
-                    imageUrls: [
-                      lodge.imageUrl,
-                      'assets/images/house1.webp',
-                      'assets/images/house2.webp',
-                    ],
-                    width: 140,
+            // Left Image Thumbnail with Green Badge
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.horizontal(left: Radius.circular(16)),
+                  child: SizedBox(
+                    width: 135,
+                    height: double.infinity,
+                    child: CardImageCarousel(
+                      imageUrls: [
+                        lodge.imageUrl,
+                        'assets/images/house1.webp',
+                        'assets/images/house2.webp',
+                      ],
+                      width: 135,
+                    ),
                   ),
                 ),
-              ),
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF00875A), // Green Badge
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(16),
+                      ),
+                    ),
+                    child: const Text(
+                      'Breakfast included',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+              ],
             ),
 
-            // Right details
+            // Right Details
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.only(top: 12.0, bottom: 12.0, right: 12.0, left: 4.0),
+                padding: const EdgeInsets.all(10.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -616,95 +948,206 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Tag chip (Top Rated / Best Value etc.)
-                        _buildTagChip(lodge),
-                        const SizedBox(height: 6),
-                        // Lodge Title
-                        Text(
-                          lodge.name,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        // Distance / Center
+                        // Title + Heart Icon
                         Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.location_on_outlined, size: 13, color: Colors.grey.shade500),
-                            const SizedBox(width: 3),
                             Expanded(
                               child: Text(
-                                '${lodge.distance} km from center (${lodge.area})',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey.shade600,
-                                  fontWeight: FontWeight.w500,
+                                lodge.name,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF0F172A),
                                 ),
+                                maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  WishlistData.toggle(lodge);
+                                });
+                              },
+                              child: Icon(
+                                isWishlisted ? Icons.favorite : Icons.favorite_border_rounded,
+                                color: isWishlisted ? const Color(0xFFEF4444) : Colors.grey.shade500,
+                                size: 20,
                               ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 4),
-                        // Rating & Reviews
+                        // Stars + Genius Badge
                         Row(
                           children: [
-                            const Icon(Icons.star, size: 13, color: Colors.amber),
-                            const SizedBox(width: 4),
-                            Text(
-                              lodge.rating.toString(),
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
+                            Row(
+                              children: List.generate(
+                                5,
+                                (index) => const Icon(Icons.star_rounded, size: 14, color: Color(0xFFFFB700)),
                               ),
                             ),
-                            const SizedBox(width: 4),
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF003580),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'Genius',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        // Pay Badge
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF003580),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'Pay with Wallet',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        // Score Box + Review Count
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF003580),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                lodge.rating.toStringAsFixed(1),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
                             Text(
-                              '($reviewsCount Reviews)',
+                              lodge.rating >= 4.7 ? 'Exceptional' : 'Superb',
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            Text(
+                              ' · $reviewsCount reviews',
                               style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey.shade500,
+                                fontSize: 11,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        // Location & Distance
+                        Row(
+                          children: [
+                            const Icon(Icons.location_on_outlined, size: 12, color: Colors.grey),
+                            const SizedBox(width: 3),
+                            Expanded(
+                              child: Text(
+                                '${lodge.distance} km from center · ${lodge.area}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey.shade700,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ],
                         ),
                       ],
                     ),
-
-                    // Price per night & Arrow icon
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.center,
+                    const SizedBox(height: 8),
+                    // Room Type & Pricing
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            '${lodge.roomType} : ${lodge.beds} bed',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 3),
                         Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          crossAxisAlignment: CrossAxisAlignment.baseline,
+                          textBaseline: TextBaseline.alphabetic,
                           children: [
                             Text(
-                              _formatPrice(lodge.price),
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF1B5E20), // Premium Dark Green for pricing
+                              '${widget.numNights} nights : ',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey.shade600,
                               ),
                             ),
                             Text(
-                              ' / night',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey.shade500,
+                              'TSh ${(lodge.price * 1.25 ~/ 1000)}k ',
+                              style: const TextStyle(
+                                fontSize: 11.5,
+                                decoration: TextDecoration.lineThrough,
+                                color: Color(0xFFEF4444),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              _formatPrice(lodge.price),
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF0F172A),
                               ),
                             ),
                           ],
                         ),
-                        Icon(
-                          Icons.arrow_forward_ios,
-                          size: 14,
-                          color: Colors.grey.shade400,
+                        const SizedBox(height: 2),
+                        Text(
+                          'Taxes and fees included',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'Only 1 left at this price!',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFFEF4444),
+                          ),
                         ),
                       ],
                     ),

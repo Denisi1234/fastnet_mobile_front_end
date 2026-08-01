@@ -1,18 +1,45 @@
 import 'package:flutter/material.dart';
 
+class LodgeFilterOptions {
+  final RangeValues priceRange;
+  final double minRating;
+  final bool freeCancellation;
+  final Set<String> selectedAmenities;
+  final Set<String> selectedNeighborhoods;
+
+  const LodgeFilterOptions({
+    required this.priceRange,
+    required this.minRating,
+    required this.freeCancellation,
+    required this.selectedAmenities,
+    required this.selectedNeighborhoods,
+  });
+}
+
 class FilterBottomSheet extends StatefulWidget {
-  const FilterBottomSheet({Key? key}) : super(key: key);
+  final LodgeFilterOptions initialOptions;
+  const FilterBottomSheet({Key? key, required this.initialOptions}) : super(key: key);
 
   @override
   State<FilterBottomSheet> createState() => _FilterBottomSheetState();
 }
 
 class _FilterBottomSheetState extends State<FilterBottomSheet> {
-  RangeValues _priceRange = const RangeValues(0, 200000);
-  double _minRating = 0;
-  bool _freeCancellation = false;
+  late RangeValues _priceRange;
+  late double _minRating;
+  late bool _freeCancellation;
   final Set<String> _selectedAmenities = {};
   final Set<String> _selectedNeighborhoods = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _priceRange = widget.initialOptions.priceRange;
+    _minRating = widget.initialOptions.minRating;
+    _freeCancellation = widget.initialOptions.freeCancellation;
+    _selectedAmenities.addAll(widget.initialOptions.selectedAmenities);
+    _selectedNeighborhoods.addAll(widget.initialOptions.selectedNeighborhoods);
+  }
 
   static const List<String> _amenities = [
     'Wi-Fi',
@@ -253,7 +280,18 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
                   width: double.infinity,
                   height: 52,
                   child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
+                     onPressed: () {
+                      Navigator.pop(
+                        context,
+                        LodgeFilterOptions(
+                          priceRange: _priceRange,
+                          minRating: _minRating,
+                          freeCancellation: _freeCancellation,
+                          selectedAmenities: _selectedAmenities,
+                          selectedNeighborhoods: _selectedNeighborhoods,
+                        ),
+                      );
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.red.shade900,
                       shape: RoundedRectangleBorder(

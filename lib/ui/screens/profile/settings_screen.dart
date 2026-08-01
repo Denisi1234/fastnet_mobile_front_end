@@ -77,6 +77,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildSectionHeader('App Preferences'),
             _buildSettingsGroup([
               _buildSettingsTile(
+                Icons.language_outlined,
+                'Language',
+                'Change the application language',
+                () {
+                  _showLanguageDialog(context);
+                },
+              ),
+              _buildSettingsDivider(),
+              _buildSettingsTile(
                 Icons.info_outline,
                 'App Walkthrough',
                 'Review the introductory slides and features guide',
@@ -102,6 +111,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  void _showLanguageDialog(BuildContext context) {
+    String selectedLang = 'English';
+    showDialog(
+      context: context,
+      builder: (BuildContext ctx) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Select Language', style: TextStyle(fontWeight: FontWeight.bold)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: ['English', 'Swahili', 'French', 'Arabic'].map((lang) {
+                  return RadioListTile<String>(
+                    title: Text(lang, style: const TextStyle(fontWeight: FontWeight.w500)),
+                    value: lang,
+                    groupValue: selectedLang,
+                    activeColor: Colors.red.shade900,
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() {
+                          selectedLang = val;
+                        });
+                      }
+                    },
+                  );
+                }).toList(),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Language changed to $selectedLang'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade900,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 

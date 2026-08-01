@@ -20,6 +20,18 @@ class _RoomMapScreenState extends State<RoomMapScreen> {
     };
   });
 
+  int get _bookedCount => _rooms.where((room) => room['isBooked'] == true).length;
+  int get _selectedCount => _rooms.where((room) => room['isSelected'] == true).length;
+  int get _availableCount => _rooms.length - _bookedCount;
+
+  void _clearSelection() {
+    setState(() {
+      for (final room in _rooms) {
+        room['isSelected'] = false;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -42,17 +54,33 @@ class _RoomMapScreenState extends State<RoomMapScreen> {
           Container(
             color: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Floor 1 - Main Wing', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    _buildLegendItem(Colors.white, 'Available', true),
-                    const SizedBox(width: 12),
-                    _buildLegendItem(Colors.red.shade400, 'Booked', false),
-                    const SizedBox(width: 12),
-                    _buildLegendItem(Colors.blue.shade600, 'Selected', false),
+                    const Text('Floor 1 - Main Wing', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    Row(
+                      children: [
+                        _buildLegendItem(Colors.white, 'Available', true),
+                        const SizedBox(width: 12),
+                        _buildLegendItem(Colors.redAccent, 'Booked', false),
+                        const SizedBox(width: 12),
+                        _buildLegendItem(Colors.blue.shade600, 'Selected', false),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    _buildStatChip('Rooms', _rooms.length, Colors.red.shade900),
+                    _buildStatChip('Available', _availableCount, Colors.green.shade700),
+                    _buildStatChip('Booked', _bookedCount, Colors.red.shade700),
+                    _buildStatChip('Selected', _selectedCount, Colors.blue.shade700),
                   ],
                 ),
               ],
@@ -63,8 +91,11 @@ class _RoomMapScreenState extends State<RoomMapScreen> {
           // The visual map (Corridor style)
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              child: _buildCorridorMap(),
+              scrollDirection: Axis.horizontal,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                child: _buildCorridorMap(),
+              ),
             ),
           ),
           
@@ -79,13 +110,7 @@ class _RoomMapScreenState extends State<RoomMapScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () {
-                      setState(() {
-                        for (var room in _rooms) {
-                          room['isSelected'] = false;
-                        }
-                      });
-                    },
+                    onPressed: _clearSelection,
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -97,7 +122,7 @@ class _RoomMapScreenState extends State<RoomMapScreen> {
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () {
-                       final selected = _rooms.where((r) => r['isSelected']).toList();
+                       final selected = _rooms.where((r) => r['isSelected'] == true).toList();
                        if(selected.isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Select an available room first.')));
                           return;
@@ -135,6 +160,35 @@ class _RoomMapScreenState extends State<RoomMapScreen> {
         const SizedBox(width: 4),
         Text(label, style: const TextStyle(fontSize: 12)),
       ],
+    );
+  }
+
+  Widget _buildStatChip(String label, int value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$label: $value',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+          ),
+        ],
+      ),
     );
   }
 
@@ -200,8 +254,8 @@ class _RoomMapScreenState extends State<RoomMapScreen> {
   }
 
   Widget _buildRoomBox(Map<String, dynamic> room) {
-    final isBooked = room['isBooked'];
-    final isSelected = room['isSelected'];
+    final bool isBooked = room['isBooked'] == true;
+    final bool isSelected = room['isSelected'] == true;
 
     Color bgColor = Colors.white;
     Color borderColor = Colors.grey.shade400;
@@ -217,43 +271,48 @@ class _RoomMapScreenState extends State<RoomMapScreen> {
       textColor = Colors.white;
     }
 
-    return GestureDetector(
-      onTap: () {
-        if (isBooked) return;
-        setState(() {
-          room['isSelected'] = !room['isSelected'];
-        });
-      },
-      child: Container(
-        width: 60,
-        height: 60,
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: borderColor, width: 2),
-          boxShadow: [
-            if (!isBooked && !isSelected) 
-              BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 4, offset: const Offset(0, 2))
-          ],
-        ),
-        child: Stack(
-          children: [
-            Center(
-              child: Text(
-                room['number'],
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: textColor,
+    return Semantics(
+      button: true,
+      label: 'Room ${room['number']} ${isBooked ? 'booked' : isSelected ? 'selected' : 'available'}',
+      child: GestureDetector(
+        onTap: () {
+          if (isBooked) return;
+          setState(() {
+            room['isSelected'] = !room['isSelected'];
+          });
+        },
+        child: Container(
+          width: 60,
+          height: 60,
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: borderColor, width: 2),
+            boxShadow: [
+              if (!isBooked && !isSelected)
+                BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 4, offset: const Offset(0, 2))
+            ],
+          ),
+          child: Stack(
+            children: [
+              Center(
+                child: Text(
+                  room['number'],
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: textColor,
+                  ),
                 ),
               ),
-            ),
-            if (isBooked)
-               const Positioned(
-                top: 4, right: 4,
-                child: Icon(Icons.block, size: 12, color: Colors.white70),
-              )
-          ],
+              if (isBooked)
+                const Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Icon(Icons.block, size: 12, color: Colors.white70),
+                )
+            ],
+          ),
         ),
       ),
     );

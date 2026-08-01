@@ -1,48 +1,66 @@
 import 'package:flutter/material.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 
 class UserSessionProvider extends ChangeNotifier {
-  bool _isLoggedIn = false;
-  bool _hasSeenOnboarding = false;
-  bool _hasSeenHostOnboarding = false;
-  String? _userName;
-  String? _userEmail;
-  String? _userPhone;
-  String _userAvatar = 'assets/images/man.jpeg';
+  bool get isLoggedIn => UserSession.isLoggedIn;
+  bool get hasSeenOnboarding => UserSession.hasSeenOnboarding;
+  bool get hasSeenHostOnboarding => UserSession.hasSeenHostOnboarding;
+  String? get userName => UserSession.userName;
+  String? get userEmail => UserSession.userEmail;
+  String? get userPhone => UserSession.userPhone;
+  String get userAvatar => UserSession.userAvatar;
+  ImageProvider get profileImage => UserSession.getProfileImageProvider();
 
-  bool get isLoggedIn => _isLoggedIn;
-  bool get hasSeenOnboarding => _hasSeenOnboarding;
-  bool get hasSeenHostOnboarding => _hasSeenHostOnboarding;
-  String? get userName => _userName;
-  String? get userEmail => _userEmail;
-  String? get userPhone => _userPhone;
-  String get userAvatar => _userAvatar;
+  void updateSession() {
+    notifyListeners();
+  }
 
   void setHasSeenOnboarding(bool value) {
-    _hasSeenOnboarding = value;
+    UserSession.setHasSeenOnboarding(value);
     notifyListeners();
   }
 
   void setHasSeenHostOnboarding(bool value) {
-    _hasSeenHostOnboarding = value;
+    UserSession.setHasSeenHostOnboarding(value);
     notifyListeners();
   }
 
   void login(String name, String email, String phone) {
-    _isLoggedIn = true;
-    _userName = name;
-    _userEmail = email;
-    _userPhone = phone;
-    _userAvatar = email.toLowerCase().contains('traveler') ? 'assets/images/man.jpeg' : 'assets/images/man2.jpeg';
+    UserSession.login(name, email, phone);
     notifyListeners();
   }
 
+  Future<bool> loginWithApi(String email, String password) async {
+    final success = await UserSession.loginWithApi(email, password);
+    notifyListeners();
+    return success;
+  }
+
+  Future<bool> registerWithApi({
+    required String name,
+    required String email,
+    required String password,
+    required String phone,
+    required String role,
+  }) async {
+    final success = await UserSession.registerWithApi(
+      name: name,
+      email: email,
+      password: password,
+      phone: phone,
+      role: role,
+    );
+    notifyListeners();
+    return success;
+  }
+
   void logout() {
-    _isLoggedIn = false;
-    _userName = null;
-    _userEmail = null;
-    _userPhone = null;
-    _userAvatar = 'assets/images/man.jpeg';
-    _hasSeenHostOnboarding = false;
+    UserSession.logout();
+    notifyListeners();
+  }
+
+  Future<void> logoutWithApi() async {
+    await UserSession.logoutWithApi();
     notifyListeners();
   }
 }

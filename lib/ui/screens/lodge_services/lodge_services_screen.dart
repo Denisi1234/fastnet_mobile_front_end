@@ -1,6 +1,10 @@
 import 'package:fastnet_mobile_front_end/ui/screens/lodge_services/lodge_services_data.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/services/api_service.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/shimmer_widget.dart';
 import 'package:flutter/material.dart';
+import 'dart:async';
 
 class LodgeServicesDashboard extends StatefulWidget {
   const LodgeServicesDashboard({Key? key}) : super(key: key);
@@ -10,244 +14,53 @@ class LodgeServicesDashboard extends StatefulWidget {
 }
 
 class _LodgeServicesDashboardState extends State<LodgeServicesDashboard> {
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    setState(() => _isLoading = true);
+    await LodgeServicesData.syncFromBackend();
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+
   String _formatPrice(int price) {
     return 'TSh ${price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}';
   }
 
   void _triggerRebuild() {
-    setState(() {});
+    _loadData();
   }
 
-
-
   void _openConciergeChat(BuildContext context) {
-    final List<Map<String, String>> chatMessages = [
-      {
-        'sender': 'concierge',
-        'text': 'Jambo! Welcome to Sunset Beach Villa Resort. I am your Digital Concierge. How can I assist you in Room 204 today?',
-        'time': 'Just now',
-      }
-    ];
-
-    final TextEditingController chatController = TextEditingController();
-    final ScrollController scrollController = ScrollController();
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (context) => StatefulBuilder(
-        builder: (context, setChatState) {
-          void scrollToEnd() {
-            Future.delayed(const Duration(milliseconds: 100), () {
-              if (scrollController.hasClients) {
-                scrollController.animateTo(
-                  scrollController.position.maxScrollExtent,
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeOut,
-                );
-              }
-            });
-          }
-
-          return Padding(
-            padding: EdgeInsets.only(
-              left: 20,
-              right: 20,
-              top: 20,
-              bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        CircleAvatar(
-                          backgroundColor: const Color(0xFFD4AF37).withValues(alpha: 0.15),
-                          radius: 18,
-                          child: const Icon(Icons.support_agent, color: Color(0xFFD4AF37), size: 18),
-                        ),
-                        const SizedBox(width: 12),
-                        const Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Digital Concierge',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87),
-                            ),
-                            Text(
-                              'Online • Ready to assist',
-                              style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.w600),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.grey),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
-                ),
-                const Divider(height: 20),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 250),
-                  child: ListView.builder(
-                    controller: scrollController,
-                    itemCount: chatMessages.length,
-                    itemBuilder: (context, index) {
-                      final msg = chatMessages[index];
-                      final isUser = msg['sender'] == 'user';
-                      
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6.0),
-                        child: Row(
-                          mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (!isUser) ...[
-                              CircleAvatar(
-                                backgroundColor: Colors.grey.shade100,
-                                radius: 12,
-                                child: const Icon(Icons.support_agent, size: 12, color: Colors.grey),
-                              ),
-                              const SizedBox(width: 6),
-                            ],
-                            Flexible(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                decoration: BoxDecoration(
-                                  color: isUser 
-                                      ? const Color(0xFF1E1E1E) 
-                                      : const Color(0xFFF1F1F1),
-                                  borderRadius: BorderRadius.only(
-                                    topLeft: const Radius.circular(16),
-                                    topRight: const Radius.circular(16),
-                                    bottomLeft: Radius.circular(isUser ? 16 : 4),
-                                    bottomRight: Radius.circular(isUser ? 4 : 16),
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      msg['text']!,
-                                      style: TextStyle(
-                                        color: isUser ? Colors.white : Colors.black87,
-                                        fontSize: 12,
-                                        height: 1.3,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      msg['time']!,
-                                      style: TextStyle(
-                                        color: isUser ? Colors.white60 : Colors.black45,
-                                        fontSize: 8,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: chatController,
-                        style: const TextStyle(fontSize: 13),
-                        decoration: InputDecoration(
-                          hintText: 'Type your request here...',
-                          hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
-                          filled: true,
-                          fillColor: const Color(0xFFF9F9F9),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(30),
-                            borderSide: BorderSide.none,
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        ),
-                        onSubmitted: (val) {
-                          if (val.trim().isEmpty) return;
-                          setChatState(() {
-                            chatMessages.add({
-                              'sender': 'user',
-                              'text': val,
-                              'time': 'Just now',
-                            });
-                          });
-                          chatController.clear();
-                          scrollToEnd();
-
-                          Future.delayed(const Duration(milliseconds: 600), () {
-                            setChatState(() {
-                              chatMessages.add({
-                                'sender': 'concierge',
-                                'text': 'Understood. Let me log that request for Room 204. I am dispatching our resort staff to handle this immediately!',
-                                'time': 'Just now',
-                              });
-                            });
-                            scrollToEnd();
-                          });
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    CircleAvatar(
-                      backgroundColor: const Color(0xFFD4AF37),
-                      radius: 20,
-                      child: IconButton(
-                        icon: const Icon(Icons.send, color: Colors.black87, size: 16),
-                        onPressed: () {
-                          final text = chatController.text;
-                          if (text.trim().isEmpty) return;
-                          setChatState(() {
-                            chatMessages.add({
-                              'sender': 'user',
-                              'text': text,
-                              'time': 'Just now',
-                            });
-                          });
-                          chatController.clear();
-                          scrollToEnd();
-
-                          Future.delayed(const Duration(milliseconds: 600), () {
-                            setChatState(() {
-                              chatMessages.add({
-                                'sender': 'concierge',
-                                'text': 'Understood. I have logged that request for Room 204. Our resort staff will attend to this right away!',
-                                'time': 'Just now',
-                              });
-                            });
-                            scrollToEnd();
-                          });
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+      builder: (context) => const _ConciergeChatDialog(),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFFDFDFD),
+        body: ListView.builder(
+          itemCount: 4,
+          padding: const EdgeInsets.only(top: 40),
+          itemBuilder: (context, index) => const SkeletonCard(),
+        ),
+      );
+    }
+
     final balance = LodgeServicesData.getOutstandingBalance();
     final activeOrdersCount = LodgeServicesData.orders.where((o) => o.status != 'Delivered').length;
     final activeRequestsCount = LodgeServicesData.serviceRequests.where((r) => r.status != 'Completed').length;
@@ -1215,7 +1028,7 @@ class _LodgeFoodMenuScreenState extends State<LodgeFoodMenuScreen> with SingleTi
                   width: double.infinity,
                   height: 50,
                   child: ElevatedButton(
-                    onPressed: () {
+                    onPressed: () async {
                       final newOrder = FoodOrder(
                         id: 'F-${1000 + LodgeServicesData.orders.length}',
                         items: List.from(_cart),
@@ -1223,7 +1036,7 @@ class _LodgeFoodMenuScreenState extends State<LodgeFoodMenuScreen> with SingleTi
                         timestamp: 'Jun 26, 2026',
                         totalAmount: total,
                       );
-                      LodgeServicesData.addFoodOrder(newOrder);
+                      await LodgeServicesData.addFoodOrder(newOrder);
                       Navigator.pop(context); // Close sheet
                       Navigator.pop(context); // Go back to dashboard
                       
@@ -1413,7 +1226,7 @@ class _LodgeServiceRequestFormState extends State<LodgeServiceRequestForm> {
             width: double.infinity,
             height: 50,
             child: ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 final newReq = ServiceRequest(
                   id: 'SR-${100 + LodgeServicesData.serviceRequests.length}',
                   serviceType: widget.serviceType,
@@ -1421,7 +1234,7 @@ class _LodgeServiceRequestFormState extends State<LodgeServiceRequestForm> {
                   notes: _notesController.text,
                   timestamp: 'Jun 26, 2026',
                 );
-                LodgeServicesData.addServiceRequest(newReq);
+                await LodgeServicesData.addServiceRequest(newReq);
                 widget.onSubmitted();
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1500,6 +1313,7 @@ class _LodgeBillingScreenState extends State<LodgeBillingScreen> {
                   BookingsData.list[i]['status'] = 'Completed';
                 }
               }
+              BookingsData.save();
               // Clear Lodge Services state
               LodgeServicesData.clearAll();
               widget.onCheckoutCompleted();
@@ -1507,19 +1321,26 @@ class _LodgeBillingScreenState extends State<LodgeBillingScreen> {
               Navigator.pop(context); // Go back from billing page
               Navigator.pop(context); // Go back from dashboard
               
-              // Return to MainScreen at Home tab
+              // Navigate to Review Screen
               Navigator.pushAndRemoveUntil(
                 context,
-                MaterialPageRoute(builder: (context) => const MainScreen(initialTab: 0)),
+                MaterialPageRoute(builder: (context) => ReviewStayScreen(
+                  onReviewCompleted: () {
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(builder: (context) => const MainScreen(initialTab: 0)),
+                      (route) => false,
+                    );
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Review submitted! Thank you!'),
+                        backgroundColor: Colors.green,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                )),
                 (route) => false,
-              );
-              
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Checkout successful! Safe travels!'),
-                  backgroundColor: Colors.green,
-                  behavior: SnackBarBehavior.floating,
-                ),
               );
             },
             style: ElevatedButton.styleFrom(
@@ -1901,10 +1722,11 @@ class StaffSimulationScreen extends StatefulWidget {
 }
 
 class _StaffSimulationScreenState extends State<StaffSimulationScreen> {
-  void _updateFoodStatus(FoodOrder order, String newStatus) {
+  void _updateFoodStatus(FoodOrder order, String newStatus) async {
     setState(() {
       order.status = newStatus;
     });
+    await LodgeServicesData.updateOrderStatus(order.id, newStatus);
     widget.onStatusChanged();
     
     // Simulate real-time notification toast
@@ -1923,10 +1745,11 @@ class _StaffSimulationScreenState extends State<StaffSimulationScreen> {
     );
   }
 
-  void _updateServiceStatus(ServiceRequest request, String newStatus) {
+  void _updateServiceStatus(ServiceRequest request, String newStatus) async {
     setState(() {
       request.status = newStatus;
     });
+    await LodgeServicesData.updateRequestStatus(request.id, newStatus);
     widget.onStatusChanged();
     
     ScaffoldMessenger.of(context).showSnackBar(
@@ -2143,3 +1966,367 @@ class _StaffSimulationScreenState extends State<StaffSimulationScreen> {
     );
   }
 }
+
+class _ConciergeChatDialog extends StatefulWidget {
+  const _ConciergeChatDialog({Key? key}) : super(key: key);
+
+  @override
+  State<_ConciergeChatDialog> createState() => _ConciergeChatDialogState();
+}
+
+class _ConciergeChatDialogState extends State<_ConciergeChatDialog> {
+  final List<Map<String, dynamic>> _messages = [];
+  final TextEditingController _chatController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  bool _isLoading = true;
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMessages();
+    _pollTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      _loadMessages();
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    _chatController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMessages() async {
+    final list = await ApiService.fetchMessages(1);
+    if (mounted) {
+      setState(() {
+        _messages.clear();
+        _messages.addAll(List<Map<String, dynamic>>.from(list));
+        _isLoading = false;
+      });
+      _scrollToEnd();
+    }
+  }
+
+  void _scrollToEnd() {
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _sendMessage() async {
+    final text = _chatController.text.trim();
+    if (text.isEmpty) return;
+    _chatController.clear();
+    
+    setState(() {
+      _messages.add({
+        'sender_id': UserSession.userId ?? 0,
+        'text': text,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    });
+    _scrollToEnd();
+
+    await ApiService.sendMessage(
+      recipientId: 1,
+      lodgeName: 'Sunset Beach Villa Resort',
+      text: text,
+    );
+    _loadMessages();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: const Color(0xFFD4AF37).withAlpha(38), // 0.15 * 255 = 38
+                    radius: 18,
+                    child: const Icon(Icons.support_agent, color: Color(0xFFD4AF37), size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Digital Concierge',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87),
+                      ),
+                      Text(
+                        'Online • Ready to assist',
+                        style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.grey),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+          const Divider(height: 20),
+          _isLoading
+              ? const SizedBox(
+                  height: 200,
+                  child: Center(
+                    child: CircularProgressIndicator(color: Color(0xFFD4AF37)),
+                  ),
+                )
+              : ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 250),
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    itemCount: _messages.isEmpty ? 1 : _messages.length,
+                    itemBuilder: (context, index) {
+                      if (_messages.isEmpty) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 20.0),
+                          child: Center(
+                            child: Text(
+                              'Say Jambo! Ask for extra amenities or room updates.',
+                              style: TextStyle(color: Colors.grey, fontSize: 12),
+                            ),
+                          ),
+                        );
+                      }
+                      
+                      final msg = _messages[index];
+                      final isUser = msg['sender_id'] == UserSession.userId;
+                      
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6.0),
+                        child: Row(
+                          mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (!isUser) ...[
+                              CircleAvatar(
+                                backgroundColor: Colors.grey.shade100,
+                                radius: 12,
+                                child: const Icon(Icons.support_agent, size: 12, color: Colors.grey),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            Flexible(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                decoration: BoxDecoration(
+                                  color: isUser 
+                                      ? const Color(0xFF1E1E1E) 
+                                      : const Color(0xFFF1F1F1),
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: const Radius.circular(16),
+                                    topRight: const Radius.circular(16),
+                                    bottomLeft: Radius.circular(isUser ? 16 : 4),
+                                    bottomRight: Radius.circular(isUser ? 4 : 16),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      msg['text'] ?? '',
+                                      style: TextStyle(
+                                        color: isUser ? Colors.white : Colors.black87,
+                                        fontSize: 12,
+                                        height: 1.3,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      msg['created_at'] != null 
+                                          ? msg['created_at'].toString().contains('T')
+                                              ? msg['created_at'].toString().split('T')[1].substring(0, 5)
+                                              : 'Just now'
+                                          : 'Just now',
+                                      style: TextStyle(
+                                        color: isUser ? Colors.white60 : Colors.black45,
+                                        fontSize: 8,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _chatController,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: 'Type your request here...',
+                    hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                    filled: true,
+                    fillColor: const Color(0xFFF9F9F9),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(30),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                  onSubmitted: (_) => _sendMessage(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              CircleAvatar(
+                backgroundColor: const Color(0xFFD4AF37),
+                radius: 20,
+                child: IconButton(
+                  icon: const Icon(Icons.send, color: Colors.black87, size: 16),
+                  onPressed: _sendMessage,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ------------------------------------
+// 5. REVIEW STAY SCREEN
+// ------------------------------------
+
+class ReviewStayScreen extends StatefulWidget {
+  final VoidCallback onReviewCompleted;
+  const ReviewStayScreen({Key? key, required this.onReviewCompleted}) : super(key: key);
+
+  @override
+  State<ReviewStayScreen> createState() => _ReviewStayScreenState();
+}
+
+class _ReviewStayScreenState extends State<ReviewStayScreen> {
+  int _rating = 0;
+  final TextEditingController _reviewController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Rate your stay', style: TextStyle(color: Colors.black)),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black),
+      ),
+      backgroundColor: Colors.white,
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const SizedBox(height: 20),
+            Icon(Icons.check_circle, size: 64, color: Colors.green.shade600),
+            const SizedBox(height: 16),
+            const Text(
+              'Checkout Successful',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'How was your stay at the lodge?',
+              style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 40),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(5, (index) {
+                return IconButton(
+                  iconSize: 48,
+                  padding: EdgeInsets.zero,
+                  icon: Icon(
+                    index < _rating ? Icons.star : Icons.star_border,
+                    color: index < _rating ? Colors.amber : Colors.grey.shade300,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _rating = index + 1;
+                    });
+                  },
+                );
+              }),
+            ),
+            const SizedBox(height: 32),
+            TextField(
+              controller: _reviewController,
+              maxLines: 4,
+              decoration: InputDecoration(
+                hintText: 'Share details of your own experience at this place...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: Colors.red.shade900),
+                ),
+              ),
+            ),
+            const SizedBox(height: 40),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                onPressed: _rating > 0
+                    ? () {
+                        widget.onReviewCompleted();
+                      }
+                    : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade900,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  disabledBackgroundColor: Colors.grey.shade300,
+                ),
+                child: const Text('Submit Review', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: widget.onReviewCompleted,
+              child: Text('Skip for now', style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

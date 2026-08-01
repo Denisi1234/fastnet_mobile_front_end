@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:fastnet_mobile_front_end/services/api_service.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/shimmer_widget.dart';
 
 class StaffManagement extends StatefulWidget {
   const StaffManagement({Key? key}) : super(key: key);
@@ -8,11 +10,25 @@ class StaffManagement extends StatefulWidget {
 }
 
 class _StaffManagementState extends State<StaffManagement> {
-  final List<Map<String, String>> _staffList = [
-    {'name': 'Juma Hamis', 'role': 'Housekeeper', 'phone': '+255 784 111 222', 'status': 'On-Duty', 'room': 'None'},
-    {'name': 'Neema Mariam', 'role': 'Receptionist', 'phone': '+255 754 333 444', 'status': 'On-Duty', 'room': 'Front Desk'},
-    {'name': 'Ally Salim', 'role': 'Maintenance', 'phone': '+255 712 555 666', 'status': 'Off-Duty', 'room': 'None'},
-  ];
+  List<Map<String, dynamic>> _staffList = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStaff();
+  }
+
+  Future<void> _loadStaff() async {
+    setState(() => _isLoading = true);
+    final list = await ApiService.fetchStaff();
+    if (mounted) {
+      setState(() {
+        _staffList = list.map((item) => Map<String, dynamic>.from(item)).toList();
+        _isLoading = false;
+      });
+    }
+  }
 
   void _addStaffDialog() {
     final nameController = TextEditingController();
@@ -69,24 +85,33 @@ class _StaffManagementState extends State<StaffManagement> {
                   child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
                 ),
                 ElevatedButton(
-                  onPressed: () {
+                  onPressed: () async {
                     if (formKey.currentState!.validate()) {
-                      setState(() {
-                        _staffList.add({
-                          'name': nameController.text.trim(),
-                          'role': selectedRole,
-                          'phone': phoneController.text.trim(),
-                          'status': 'Off-Duty',
-                          'room': 'None',
-                        });
-                      });
+                      final name = nameController.text.trim();
+                      final phone = phoneController.text.trim();
+                      final role = selectedRole;
+                      
                       Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('${nameController.text.trim()} added to staff roster.'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
+                      setState(() => _isLoading = true);
+                      
+                      final result = await ApiService.addStaff(name: name, role: role, phone: phone);
+                      if (result != null) {
+                        await _loadStaff();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('$name added to staff roster.'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      } else {
+                        await _loadStaff();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Failed to add staff member.'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
                     }
                   },
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900),
@@ -100,7 +125,7 @@ class _StaffManagementState extends State<StaffManagement> {
     );
   }
 
-  void _assignTask(Map<String, String> staff) {
+  void _assignTask(Map<String, dynamic> staff) {
     final roomController = TextEditingController();
     final formKey = GlobalKey<FormState>();
 
@@ -133,19 +158,29 @@ class _StaffManagementState extends State<StaffManagement> {
               child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (formKey.currentState!.validate()) {
-                  setState(() {
-                    staff['status'] = 'On-Duty';
-                    staff['room'] = 'Room ${roomController.text.trim()}';
-                  });
+                  final roomNum = roomController.text.trim();
+                  
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('${staff['name']} has been assigned to ${staff['room']}.'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
+                  setState(() => _isLoading = true);
+                  
+                  final result = await ApiService.updateStaff(staff['id'], {
+                    'status': 'On-Duty',
+                    'room': 'Room $roomNum',
+                  });
+                  
+                  if (result != null) {
+                    await _loadStaff();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('${staff['name']} has been assigned to Room $roomNum.'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  } else {
+                    await _loadStaff();
+                  }
                 }
               },
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900),
@@ -157,21 +192,26 @@ class _StaffManagementState extends State<StaffManagement> {
     );
   }
 
-  void _toggleDutyStatus(Map<String, String> staff) {
-    setState(() {
-      if (staff['status'] == 'On-Duty') {
-        staff['status'] = 'Off-Duty';
-        staff['room'] = 'None';
-      } else {
-        staff['status'] = 'On-Duty';
-      }
+  void _toggleDutyStatus(Map<String, dynamic> staff) async {
+    final nextStatus = staff['status'] == 'On-Duty' ? 'Off-Duty' : 'On-Duty';
+    
+    setState(() => _isLoading = true);
+    final result = await ApiService.updateStaff(staff['id'], {
+      'status': nextStatus,
+      if (nextStatus == 'Off-Duty') 'room': 'None',
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${staff['name']} status toggled to ${staff['status']}.'),
-        duration: const Duration(seconds: 1),
-      ),
-    );
+    
+    if (result != null) {
+      await _loadStaff();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${staff['name']} status toggled to $nextStatus.'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    } else {
+      await _loadStaff();
+    }
   }
 
   @override
@@ -184,90 +224,98 @@ class _StaffManagementState extends State<StaffManagement> {
         title: const Text('Staff Roster', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         iconTheme: const IconThemeData(color: Colors.black),
       ),
-      body: ListView.separated(
-        padding: const EdgeInsets.all(16),
-        itemCount: _staffList.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 16),
-        itemBuilder: (context, index) {
-          final staff = _staffList[index];
-          final isHousekeeper = staff['role'] == 'Housekeeper' || staff['role'] == 'Maintenance';
-          final isOnDuty = staff['status'] == 'On-Duty';
+      body: _isLoading
+          ? ListView.builder(
+              itemCount: 4,
+              padding: const EdgeInsets.only(top: 20),
+              itemBuilder: (context, index) => const SkeletonCard(height: 100),
+            )
+          : _staffList.isEmpty
+              ? const Center(child: Text('No staff members registered.', style: TextStyle(color: Colors.grey)))
+              : ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _staffList.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 16),
+                  itemBuilder: (context, index) {
+                    final staff = _staffList[index];
+                    final isHousekeeper = staff['role'] == 'Housekeeper' || staff['role'] == 'Maintenance';
+                    final isOnDuty = staff['status'] == 'On-Duty';
 
-          return Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade200),
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 8)],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(staff['name']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                    Row(
-                      children: [
-                        Text(
-                          staff['status']!.toUpperCase(),
-                          style: TextStyle(
-                            color: isOnDuty ? Colors.green.shade700 : Colors.grey,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                        Switch(
-                          value: isOnDuty,
-                          activeThumbColor: Colors.green,
-                          onChanged: (_) => _toggleDutyStatus(staff),
-                        )
-                      ],
-                    )
-                  ],
-                ),
-                Text('Role: ${staff['role']}', style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold, fontSize: 13)),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Icon(Icons.phone_outlined, size: 16, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    Text(staff['phone']!, style: TextStyle(color: Colors.grey.shade700)),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    const Icon(Icons.location_on_outlined, size: 16, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    Text('Active Assign: ${staff['room']}', style: TextStyle(color: Colors.grey.shade700)),
-                  ],
-                ),
-                if (isHousekeeper) ...[
-                  const Divider(height: 24),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => _assignTask(staff),
-                          icon: const Icon(Icons.assignment_ind_outlined, size: 16, color: Colors.black87),
-                          label: const Text('Assign Room Task', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 12)),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.grey),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                          ),
-                        ),
+                    return Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.grey.shade200),
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8)],
                       ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          );
-        },
-      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(staff['name']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                              Row(
+                                children: [
+                                  Text(
+                                    staff['status']!.toUpperCase(),
+                                    style: TextStyle(
+                                      color: isOnDuty ? Colors.green.shade700 : Colors.grey,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Switch(
+                                    value: isOnDuty,
+                                    activeThumbColor: Colors.green,
+                                    onChanged: (_) => _toggleDutyStatus(staff),
+                                  )
+                                ],
+                              )
+                            ],
+                          ),
+                          Text('Role: ${staff['role']}', style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold, fontSize: 13)),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              const Icon(Icons.phone_outlined, size: 16, color: Colors.grey),
+                              const SizedBox(width: 8),
+                              Text(staff['phone']!, style: TextStyle(color: Colors.grey.shade700)),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Icon(Icons.location_on_outlined, size: 16, color: Colors.grey),
+                              const SizedBox(width: 8),
+                              Text('Active Assign: ${staff['room']}', style: TextStyle(color: Colors.grey.shade700)),
+                            ],
+                          ),
+                          if (isHousekeeper) ...[
+                            const Divider(height: 24),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () => _assignTask(staff),
+                                    icon: const Icon(Icons.assignment_ind_outlined, size: 16, color: Colors.black87),
+                                    label: const Text('Assign Room Task', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 12)),
+                                    style: OutlinedButton.styleFrom(
+                                      side: const BorderSide(color: Colors.grey),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    );
+                  },
+                ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _addStaffDialog,
         backgroundColor: Colors.red.shade900,

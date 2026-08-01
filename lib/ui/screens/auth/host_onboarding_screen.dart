@@ -162,10 +162,10 @@ class _HostOnboardingScreenState extends State<HostOnboardingScreen> {
                                     Expanded(
                                       child: Text(
                                         bullet,
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 13,
                                           fontWeight: FontWeight.w500,
-                                          color: Colors.white90,
+                                          color: Colors.white.withOpacity(0.9),
                                           height: 1.3,
                                         ),
                                       ),

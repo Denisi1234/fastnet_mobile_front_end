@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 
 class WishlistGroup {
   String name;
@@ -14,16 +15,17 @@ class WishlistGroup {
 }
 
 class WishlistProvider extends ChangeNotifier {
-  final List<WishlistGroup> _groups = [
-    WishlistGroup(name: 'Favorites', items: [], isPrivate: true),
-  ];
+  late final List<WishlistGroup> _groups;
+
+  WishlistProvider() {
+    _groups = [
+      WishlistGroup(name: 'Favorites', items: WishlistData.list, isPrivate: true),
+    ];
+  }
 
   List<WishlistGroup> get groups => _groups;
 
-  List<Destination> get list {
-    if (_groups.isEmpty) return [];
-    return _groups[0].items;
-  }
+  List<Destination> get list => WishlistData.list;
 
   void toggle(Destination destination) {
     if (_groups.isEmpty) {

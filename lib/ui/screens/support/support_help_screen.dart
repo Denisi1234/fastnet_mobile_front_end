@@ -2,7 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/login_signup_screen.dart';
-import 'package:fastnet_mobile_front_end/services/support_service.dart';
+import 'package:fastnet_mobile_front_end/services/api_service.dart';
+
 
 class SupportHelpScreen extends StatefulWidget {
   const SupportHelpScreen({Key? key}) : super(key: key);
@@ -13,7 +14,6 @@ class SupportHelpScreen extends StatefulWidget {
 
 class _SupportHelpScreenState extends State<SupportHelpScreen> {
   List<Map<String, dynamic>> _userTickets = [];
-  bool _isLoading = true;
   Timer? _pollTimer;
 
   // Static list of FAQs for premium UI feel
@@ -41,11 +41,9 @@ class _SupportHelpScreenState extends State<SupportHelpScreen> {
     super.initState();
     if (UserSession.isLoggedIn) {
       _loadUserTickets();
-      _pollTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      _pollTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
         _loadUserTickets();
       });
-    } else {
-      _isLoading = false;
     }
   }
 
@@ -56,16 +54,10 @@ class _SupportHelpScreenState extends State<SupportHelpScreen> {
   }
 
   Future<void> _loadUserTickets() async {
-    final allTickets = await SupportService.instance.loadTickets();
-    final userTickets = allTickets.where((t) {
-      // Filter by the logged-in user's name
-      return t['user'] == UserSession.userName;
-    }).toList();
-
+    final tickets = await ApiService.fetchTickets();
     if (mounted) {
       setState(() {
-        _userTickets = userTickets;
-        _isLoading = false;
+        _userTickets = List<Map<String, dynamic>>.from(tickets);
       });
     }
   }
@@ -76,9 +68,6 @@ class _SupportHelpScreenState extends State<SupportHelpScreen> {
       MaterialPageRoute(builder: (context) => const LoginSignupScreen()),
     );
     if (success == true) {
-      setState(() {
-        _isLoading = true;
-      });
       _loadUserTickets();
       _pollTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
         _loadUserTickets();
@@ -199,12 +188,7 @@ class _SupportHelpScreenState extends State<SupportHelpScreen> {
                           if (formKey.currentState!.validate()) {
                             final messenger = ScaffoldMessenger.of(context);
                             Navigator.pop(context);
-                            setState(() {
-                              _isLoading = true;
-                            });
-                            await SupportService.instance.createTicket(
-                              userName: UserSession.userName ?? 'Traveler',
-                              role: 'User',
+                            await ApiService.createTicket(
                               issue: selectedIssue,
                               description: descController.text.trim(),
                               initialMessage: msgController.text.trim(),
@@ -298,9 +282,7 @@ class _SupportHelpScreenState extends State<SupportHelpScreen> {
         title: const Text('Lodge Support & Help', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         iconTheme: const IconThemeData(color: Colors.black87),
       ),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator(color: Colors.red.shade900))
-          : SingleChildScrollView(
+      body: SingleChildScrollView(
               padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -352,7 +334,7 @@ class _SupportHelpScreenState extends State<SupportHelpScreen> {
                             contentPadding: const EdgeInsets.all(16),
                             title: Row(
                               children: [
-                                Text(t['id'], style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold)),
+                                Text('#${t['id']}', style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold)),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(t['issue'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -373,7 +355,7 @@ class _SupportHelpScreenState extends State<SupportHelpScreen> {
                                       decoration: BoxDecoration(color: statusBg, borderRadius: BorderRadius.circular(6)),
                                       child: Text(t['status'].toUpperCase(), style: TextStyle(color: statusText, fontSize: 10, fontWeight: FontWeight.bold)),
                                     ),
-                                    Text('Last update: ${t['date']}', style: TextStyle(color: Colors.grey.shade400, fontSize: 11)),
+                                    Text('Last update: ${t['updated_at'] != null ? t['updated_at'].toString().substring(0, 10) : 'Today'}', style: TextStyle(color: Colors.grey.shade400, fontSize: 11)),
                                   ],
                                 ),
                               ],
@@ -382,7 +364,7 @@ class _SupportHelpScreenState extends State<SupportHelpScreen> {
                             onTap: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (context) => SupportChatScreen(ticketId: t['id'])),
+                                MaterialPageRoute(builder: (context) => SupportChatScreen(ticketId: t['id'] as int)),
                               );
                             },
                           ),
@@ -438,7 +420,7 @@ class _SupportHelpScreenState extends State<SupportHelpScreen> {
 }
 
 class SupportChatScreen extends StatefulWidget {
-  final String ticketId;
+  final int ticketId;
   const SupportChatScreen({Key? key, required this.ticketId}) : super(key: key);
 
   @override
@@ -470,11 +452,11 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
   }
 
   Future<void> _loadTicketDetails() async {
-    final tickets = await SupportService.instance.loadTickets();
-    final ticket = tickets.firstWhere((t) => t['id'] == widget.ticketId, orElse: () => {});
-    if (mounted && ticket.isNotEmpty) {
+    final tickets = await ApiService.fetchTickets();
+    final ticket = tickets.firstWhere((t) => t['id'] == widget.ticketId, orElse: () => null);
+    if (mounted && ticket != null) {
       setState(() {
-        _ticket = ticket;
+        _ticket = Map<String, dynamic>.from(ticket);
         _isLoading = false;
       });
       _scrollToBottom();
@@ -497,7 +479,7 @@ class _SupportChatScreenState extends State<SupportChatScreen> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
     _messageController.clear();
-    await SupportService.instance.sendMessage(widget.ticketId, 'User', text);
+    await ApiService.sendTicketMessage(widget.ticketId, text);
     _loadTicketDetails();
   }
 

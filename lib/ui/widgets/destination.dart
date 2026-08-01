@@ -2,6 +2,7 @@
 import 'package:fastnet_mobile_front_end/models/destination.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/book_room.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/reward_animations.dart';
 import 'package:flutter/material.dart';
 
 class DestinationWidget extends StatefulWidget {
@@ -50,8 +51,6 @@ class _DestinationWidgetState extends State<DestinationWidget> {
             MaterialPageRoute(
               builder: (context) => BookRoom(
                 destination: destination,
-                selectedDatesText: widget.selectedDatesText ?? 'Jun 20 – 23',
-                numNights: widget.numNights,
               ),
             ),
           );
@@ -95,48 +94,20 @@ class _DestinationWidgetState extends State<DestinationWidget> {
                     ),
                   ),
                 ),
-                // Favorite overlay button
+                // Animated Favorite button
                 Positioned(
-                  top: 12,
-                  right: 12,
-                  child: GestureDetector(
-                    onTap: () {
+                  top: 8,
+                  right: 8,
+                  child: HeartSaveButton(
+                    isSaved: WishlistData.contains(destination),
+                    onToggle: () {
                       setState(() {
                         WishlistData.toggle(destination);
                       });
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            WishlistData.contains(destination)
-                                ? '${destination.name} added to Wishlist'
-                                : '${destination.name} removed from Wishlist',
-                          ),
-                          duration: const Duration(seconds: 1),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
                     },
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.1),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          )
-                        ],
-                      ),
-                      child: Icon(
-                        Icons.favorite,
-                        color: WishlistData.contains(destination) ? Colors.red : Colors.grey.shade400,
-                        size: 20,
-                      ),
-                    ),
+                    size: 20,
                   ),
-                )
+                ),
               ],
             ),
             

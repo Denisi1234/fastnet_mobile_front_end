@@ -31,13 +31,24 @@ class _RoomSelectionScreenState extends State<RoomSelectionScreen> {
   }
 
   void _generateRooms() {
+    if (widget.destination.rooms != null && widget.destination.rooms!.isNotEmpty) {
+      _rooms = widget.destination.rooms!.map((r) {
+        return {
+          'id': r['id'] as int,
+          'number': r['room_number'] ?? 'Room',
+          'isBooked': r['status'] == 'booked',
+        };
+      }).toList();
+      return;
+    }
+
     final nameHash = widget.destination.name.hashCode;
-    
     _rooms = List.generate(16, (index) {
       final roomNo = '${(nameHash % 5 + 1) * 100 + index + 1}';
       final isBooked = (index * 3 + nameHash) % 5 == 0 || index == 2 || index == 7;
       
       return {
+        'id': index + 1,
         'number': roomNo,
         'isBooked': isBooked,
       };
@@ -340,6 +351,8 @@ class _RoomSelectionScreenState extends State<RoomSelectionScreen> {
                               }
                             }
                             if (mounted) {
+                              final selectedRoom = _rooms.firstWhere((r) => r['number'] == _selectedRoomNumber);
+                              final selectedRoomId = selectedRoom['id'] as int;
                               navigator.push(
                                 MaterialPageRoute(
                                   builder: (context) => BookingCheckoutScreen(
@@ -347,6 +360,7 @@ class _RoomSelectionScreenState extends State<RoomSelectionScreen> {
                                     selectedDatesText: widget.selectedDatesText,
                                     numNights: widget.numNights,
                                     selectedRoomNumber: _selectedRoomNumber!,
+                                    selectedRoomId: selectedRoomId,
                                   ),
                                 ),
                               );
@@ -396,8 +410,8 @@ class _RoomSelectionScreenState extends State<RoomSelectionScreen> {
   }
 
   Widget _buildRoomWidget(Map<String, dynamic> room) {
-    final number = room['number'] as String;
-    final isBooked = room['isBooked'] as bool;
+    final number = room['number']?.toString() ?? 'N/A';
+    final isBooked = room['isBooked'] == true || room['is_booked'] == true;
     final isSelected = _selectedRoomNumber == number;
 
     Color bgColor = Colors.white;

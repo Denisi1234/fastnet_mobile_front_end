@@ -1,22 +1,28 @@
 import 'dart:async';
+import 'dart:ui' as ui;
+import 'package:flutter/services.dart' show ByteData, Uint8List;
 import 'package:fastnet_mobile_front_end/models/destination.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/reviews_screen.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/room_selection.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/reward_animations.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:flutter/gestures.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' hide Size;
+import 'package:fastnet_mobile_front_end/config/constants.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/fullscreen_map.dart';
+import 'package:share_plus/share_plus.dart';
 
 class BookRoom extends StatefulWidget {
   final Destination destination;
-  final String selectedDatesText;
-  final int numNights;
+  final String? selectedDatesText;
+  final int? numNights;
 
   const BookRoom({
     Key? key,
     required this.destination,
-    required this.selectedDatesText,
-    required this.numNights,
+    this.selectedDatesText,
+    this.numNights,
   }) : super(key: key);
 
   @override
@@ -29,21 +35,84 @@ class _BookRoomState extends State<BookRoom> with SingleTickerProviderStateMixin
   Timer? _carouselTimer;
   final ScrollController _scrollController = ScrollController();
   bool _showSolidTitle = false;
-  
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
+  bool _overviewExpanded = false;
+  late DateTimeRange _selectedRange;
+
+  // ── Computed helpers ──────────────────────────────────────────────────────
+  int get _numNights => _selectedRange.duration.inDays;
+
+  String _fmt(DateTime d) {
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return '${months[d.month - 1]} ${d.day}';
+  }
+
+  String get _datesText => '${_fmt(_selectedRange.start)} – ${_fmt(_selectedRange.end)}';
+
+  DateTimeRange _parseDates(String? text) {
+    final today = DateTime.now();
+    final defaultStart = DateTime(today.year, today.month, today.day);
+    final defaultEnd = defaultStart.add(const Duration(days: 1));
+    
+    if (text == null || text.isEmpty) {
+      return DateTimeRange(start: defaultStart, end: defaultEnd);
+    }
+    
+    try {
+      final cleanText = text.replaceAll('–', '-').replaceAll(' - ', '-');
+      final parts = cleanText.split('-');
+      if (parts.length != 2) {
+        return DateTimeRange(start: defaultStart, end: defaultEnd);
+      }
+      
+      final startPart = parts[0].trim();
+      var endPart = parts[1].trim();
+      
+      final yearReg = RegExp(r'\d{4}');
+      final yearMatch = yearReg.firstMatch(text);
+      final year = yearMatch != null ? int.parse(yearMatch.group(0)!) : today.year;
+      
+      endPart = endPart.replaceAll(RegExp(r',\s*\d{4}'), '').trim();
+      
+      final monthsAbbr = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      
+      final startTokens = startPart.split(' ');
+      final startMonthStr = startTokens[0];
+      final startDayVal = int.parse(startTokens[1]);
+      final startMonthVal = monthsAbbr.indexOf(startMonthStr) + 1;
+      final startDate = DateTime(year, startMonthVal, startDayVal);
+      
+      final endTokens = endPart.split(' ');
+      int endMonthVal = startMonthVal;
+      int endDayVal;
+      if (endTokens.length == 2) {
+        final endMonthStr = endTokens[0];
+        endMonthVal = monthsAbbr.indexOf(endMonthStr) + 1;
+        endDayVal = int.parse(endTokens[1]);
+      } else {
+        endDayVal = int.parse(endTokens[0]);
+      }
+      final endDate = DateTime(year, endMonthVal, endDayVal);
+      
+      return DateTimeRange(start: startDate, end: endDate);
+    } catch (_) {
+      return DateTimeRange(start: defaultStart, end: defaultEnd);
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     RecentlyViewedData.add(widget.destination);
     _pageController = PageController();
-    
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat();
-    _pulseAnimation = Tween<double>(begin: 8.0, end: 24.0).animate(_pulseController);
+
+    _selectedRange = _parseDates(widget.selectedDatesText);
+    if (widget.selectedDatesText == null && widget.numNights != null && widget.numNights! > 0) {
+      final start = _selectedRange.start;
+      _selectedRange = DateTimeRange(
+        start: start,
+        end: start.add(Duration(days: widget.numNights!)),
+      );
+    }
 
     _carouselTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
       if (_pageController.hasClients) {
@@ -60,16 +129,58 @@ class _BookRoomState extends State<BookRoom> with SingleTickerProviderStateMixin
       if (_scrollController.hasClients) {
         final offset = _scrollController.offset;
         if (offset > 240 && !_showSolidTitle) {
-          setState(() {
-            _showSolidTitle = true;
-          });
+          setState(() { _showSolidTitle = true; });
         } else if (offset <= 240 && _showSolidTitle) {
-          setState(() {
-            _showSolidTitle = false;
-          });
+          setState(() { _showSolidTitle = false; });
         }
       }
     });
+  }
+
+  Future<void> _openDatePicker() async {
+    final today = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(today.year, today.month, today.day),
+      lastDate: DateTime(today.year + 2, 12, 31),
+      initialDateRange: _selectedRange,
+      helpText: 'Select your stay dates',
+      saveText: 'CONFIRM',
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFFB71C1C),
+              onPrimary: Colors.white,
+              onSurface: Colors.black87,
+            ),
+            textButtonTheme: TextButtonThemeData(
+              style: TextButton.styleFrom(foregroundColor: Color(0xFFB71C1C)),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() => _selectedRange = picked);
+    }
+  }
+
+  void _shareLodge() {
+    final d = widget.destination;
+    final price = _formatPrice(d.price);
+    final text = '''
+🏡 ${d.name}
+⭐ ${d.rating} · 148 reviews
+📍 ${d.area}, ${d.city}, Tanzania
+💰 $price / night
+
+Book this lodge on FastNet:
+https://fastnet.app/lodges/${Uri.encodeComponent(d.name)}
+    '''.trim();
+
+    Share.share(text, subject: 'Check out ${d.name} on FastNet');
   }
 
   @override
@@ -77,9 +188,9 @@ class _BookRoomState extends State<BookRoom> with SingleTickerProviderStateMixin
     _carouselTimer?.cancel();
     _pageController.dispose();
     _scrollController.dispose();
-    _pulseController.dispose();
     super.dispose();
   }
+
 
   String _formatPrice(int price) {
     return 'TSh ${price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}';
@@ -112,516 +223,381 @@ class _BookRoomState extends State<BookRoom> with SingleTickerProviderStateMixin
     return Icons.check_circle_outline;
   }
 
-  String _getHostName(String city) {
-    if (city.toLowerCase().contains('dodoma')) {
-      return 'Elias';
-    } else if (city.toLowerCase().contains('dar es salaam')) {
-      return 'Mariam';
-    } else {
-      return 'Thomas';
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
-    final hostName = _getHostName(widget.destination.city);
     final images = _lodgeImages;
 
     return Scaffold(
       backgroundColor: Colors.white,
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
-            )
-          ],
-          border: Border(top: BorderSide(color: Colors.grey.shade100)),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-        height: 85,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    Text(
-                      _formatPrice(widget.destination.price),
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
-                    ),
-                    const Text(' / night', style: TextStyle(color: Colors.black54, fontSize: 13)),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  widget.selectedDatesText,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    decoration: TextDecoration.underline,
-                    color: Colors.black87,
-                  ),
-                )
-              ],
-            ),
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.pink.shade700, Colors.red.shade900],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => RoomSelectionScreen(
-                        destination: widget.destination,
-                        selectedDatesText: widget.selectedDatesText,
-                        numNights: widget.numNights,
+      bottomNavigationBar: SafeArea(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, -5),
+              )
+            ],
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Price', style: TextStyle(color: Colors.black87, fontSize: 13, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 2),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        _formatPrice(widget.destination.price),
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.black87),
                       ),
-                    ),
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.transparent,
-                  shadowColor: Colors.transparent,
-                  padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: const Text(
-                  'Reserve Room',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
-                ),
-              ),
-            )
-          ],
-        ),
-      ),
-      body: NestedScrollView(
-        controller: _scrollController,
-        headerSliverBuilder: (context, innerBoxIsScrolled) {
-          return [
-            SliverAppBar(
-              expandedHeight: 300,
-              pinned: true,
-              elevation: _showSolidTitle ? 1.0 : 0.0,
-              backgroundColor: Colors.white,
-              iconTheme: IconThemeData(color: _showSolidTitle ? Colors.black87 : Colors.white),
-              leading: Container(
-                margin: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: _showSolidTitle ? Colors.transparent : Colors.black.withValues(alpha: 0.3),
-                  shape: BoxShape.circle,
-                ),
-                child: IconButton(
-                  icon: Icon(Icons.arrow_back, size: 20, color: _showSolidTitle ? Colors.black87 : Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ),
-              title: AnimatedOpacity(
-                opacity: _showSolidTitle ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 200),
-                child: Text(
-                  widget.destination.name,
-                  style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              actions: [
-                Container(
-                  margin: const EdgeInsets.symmetric(vertical: 8),
-                  decoration: BoxDecoration(
-                    color: _showSolidTitle ? Colors.transparent : Colors.black.withValues(alpha: 0.3),
-                    shape: BoxShape.circle,
+                      const Text('/night', style: TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.w600)),
+                    ],
                   ),
-                  child: IconButton(
-                    icon: Icon(Icons.share_outlined, size: 20, color: _showSolidTitle ? Colors.black87 : Colors.white),
-                    onPressed: () {},
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  margin: const EdgeInsets.symmetric(vertical: 8),
-                  decoration: BoxDecoration(
-                    color: _showSolidTitle ? Colors.transparent : Colors.black.withValues(alpha: 0.3),
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    icon: Icon(
-                      WishlistData.contains(widget.destination) ? Icons.favorite : Icons.favorite_border,
-                      size: 20,
-                      color: WishlistData.contains(widget.destination)
-                          ? Colors.red
-                          : (_showSolidTitle ? Colors.black87 : Colors.white),
-                    ),
+                ],
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 24),
+                  child: ElevatedButton(
                     onPressed: () {
-                      setState(() {
-                        WishlistData.toggle(widget.destination);
-                      });
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            WishlistData.contains(widget.destination)
-                                ? '${widget.destination.name} added to Wishlist'
-                                : '${widget.destination.name} removed from Wishlist',
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => RoomSelectionScreen(
+                            destination: widget.destination,
+                            selectedDatesText: _datesText,
+                            numNights: _numNights,
                           ),
-                          duration: const Duration(seconds: 1),
-                          behavior: SnackBarBehavior.floating,
                         ),
                       );
                     },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E88E5), // Prominent Blue
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      'Select Room',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 12),
-              ],
-              flexibleSpace: FlexibleSpaceBar(
-                background: Stack(
-                  children: [
-                    PageView.builder(
+              ),
+            ],
+          ),
+        ),
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Animated Image Carousel ────────────────────────────────────
+            SizedBox(
+              height: 380,
+              child: Stack(
+                children: [
+                  // PageView with animated image transitions
+                  ClipRRect(
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(40),
+                      bottomRight: Radius.circular(40),
+                    ),
+                    child: PageView.builder(
                       controller: _pageController,
-                      itemCount: images.length,
                       onPageChanged: (index) {
-                        setState(() {
-                          _currentImageIndex = index;
-                        });
+                        setState(() => _currentImageIndex = index);
                       },
+                      itemCount: images.length,
                       itemBuilder: (context, index) {
-                        return AnimatedBuilder(
-                          animation: _pageController,
-                          builder: (context, child) {
-                            double value = 1.0;
-                            if (_pageController.position.haveDimensions) {
-                              value = _pageController.page! - index;
-                              value = (1 - (value.abs() * 0.15)).clamp(0.0, 1.0);
-                            }
-                            return Center(
-                              child: SizedBox(
-                                height: Curves.easeInOut.transform(value) * 320,
-                                width: double.infinity,
+                        return AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 600),
+                          transitionBuilder: (child, animation) {
+                            return FadeTransition(
+                              opacity: animation,
+                              child: ScaleTransition(
+                                scale: Tween<double>(begin: 1.08, end: 1.0)
+                                    .animate(CurvedAnimation(
+                                  parent: animation,
+                                  curve: Curves.easeOutCubic,
+                                )),
                                 child: child,
                               ),
                             );
                           },
                           child: Image.asset(
                             images[index],
+                            key: ValueKey(images[index]),
+                            width: double.infinity,
+                            height: 380,
                             fit: BoxFit.cover,
                           ),
                         );
                       },
                     ),
-// Indicator Count pill
-                   Positioned(
-                     bottom: 16,
-                     right: 16,
-                     child: GestureDetector(
-                       onTap: () {
-                         Navigator.push(
-                           context,
-                           MaterialPageRoute(
-                             builder: (context) => FullscreenGalleryScreen(
-                               images: images,
-                               initialIndex: _currentImageIndex,
-                             ),
-                           ),
-                         );
-                       },
-                       child: Container(
-                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                         decoration: BoxDecoration(
-                           color: Colors.black.withValues(alpha: 0.7),
-                           borderRadius: BorderRadius.circular(6),
-                         ),
-                         child: Row(
-                           mainAxisSize: MainAxisSize.min,
-                           children: [
-                             const Icon(Icons.photo_library_outlined, color: Colors.white, size: 12),
-                             const SizedBox(width: 6),
-                             Text(
-                               '${_currentImageIndex + 1} / ${images.length}',
-                               style: const TextStyle(
-                                 color: Colors.white,
-                                 fontSize: 11,
-                                 fontWeight: FontWeight.bold,
-                               ),
-                             ),
-                           ],
-                         ),
-                       ),
-                     ),
-                   ),
-                    Positioned(
-                      bottom: 16,
-                      left: 0,
-                      right: 0,
+                  ),
+
+                  // Gradient overlay
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(40),
+                        bottomRight: Radius.circular(40),
+                      ),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.transparent,
+                              Colors.black.withValues(alpha: 0.65),
+                            ],
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            stops: const [0.45, 1.0],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // Top navigation buttons
+                  SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: List.generate(
-                          images.length,
-                          (index) => AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            margin: const EdgeInsets.symmetric(horizontal: 3),
-                            width: _currentImageIndex == index ? 8 : 5,
-                            height: _currentImageIndex == index ? 8 : 5,
-                            decoration: BoxDecoration(
-                              color: _currentImageIndex == index ? Colors.white : Colors.white54,
-                              shape: BoxShape.circle,
-                            ),
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _buildCircularButton(
+                            icon: Icons.arrow_back_ios_new,
+                            onTap: () => Navigator.pop(context),
                           ),
-                        ),
+                          _buildCircularButton(
+                            icon: Icons.tune,
+                            onTap: () {},
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-          ];
-        },
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Title
-              Text(
-                widget.destination.name,
-                style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, letterSpacing: -0.6),
-              ),
-              const SizedBox(height: 12),
-              
-              // Rating / Review Counts / Location line (Clickable reviews to view/submit reviews)
-              Row(
-                children: [
-                  const Icon(Icons.star, size: 16, color: Colors.black),
-                  const SizedBox(width: 4),
-                  Text(
-                    widget.destination.rating.toString(),
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                   ),
-const SizedBox(width: 6),
-                   const Text('·', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-                   const SizedBox(width: 6),
-                   GestureDetector(
-                     onTap: () {
-                       Navigator.push(
-                         context,
-                         MaterialPageRoute(
-                           builder: (context) => ReviewsScreen(lodgeName: widget.destination.name),
-                         ),
-                       );
-                     },
-                     child: const Text(
-                       '148 reviews',
-                       style: TextStyle(
-                         fontWeight: FontWeight.bold,
-                         fontSize: 14,
-                         decoration: TextDecoration.underline,
-                       ),
-                     ),
-                   ),
-                  const SizedBox(width: 6),
-                  const Text('·', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Superhost',
-                    style: TextStyle(
-                      color: Colors.grey.shade600,
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 32),
 
-              // Host detail block
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Entire lodge hosted by $hostName',
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '${widget.destination.guests} guest${widget.destination.guests > 1 ? 's' : ''} • ${widget.destination.bedrooms} bedroom${widget.destination.bedrooms > 1 ? 's' : ''} • ${widget.destination.beds} bed${widget.destination.beds > 1 ? 's' : ''} • ${widget.destination.baths} bath${widget.destination.baths > 1 ? 's' : ''}',
-                        style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-                      ),
-                    ],
-                  ),
-                  CircleAvatar(
-                    radius: 26,
-                    backgroundImage: AssetImage(
-                      widget.destination.city.toLowerCase().contains('dodoma')
-                          ? "assets/images/man.jpeg"
-                          : "assets/images/man2.jpeg",
-                    ),
-                  )
-                ],
-              ),
-              const SizedBox(height: 32),
-
-              // Highlights
-              _buildHighlightTile(
-                Icons.workspace_premium,
-                '$hostName is a Superhost',
-                'Superhosts are experienced, highly rated hosts committed to providing outstanding stays.',
-              ),
-              const SizedBox(height: 20),
-              _buildHighlightTile(
-                Icons.vpn_key_outlined,
-                'Self check-in',
-                'Easily access the lodge via electronic keypad lock instructions.',
-              ),
-              const SizedBox(height: 20),
-              _buildHighlightTile(
-                Icons.calendar_today_outlined,
-                'Free cancellation for 48 hours',
-                'Cancel your booking within 48 hours of reservation for a full refund.',
-              ),
-              const SizedBox(height: 32),
-
-              // Description
-              const Text('About this lodge', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              Text(
-                widget.destination.condition,
-                style: TextStyle(fontSize: 15, color: Colors.grey.shade800, height: 1.5, letterSpacing: -0.1),
-              ),
-              const SizedBox(height: 32),
-
-              // Amenities
-              const Text('What this place offers', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: widget.destination.amenities.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 16),
-                itemBuilder: (context, index) {
-                  final amenity = widget.destination.amenities[index];
-                  return Row(
-                    children: [
-                      Icon(_getAmenityIcon(amenity), size: 24, color: Colors.black87),
-                      const SizedBox(width: 16),
-                      Text(
-                        amenity,
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w400),
-                      ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 32),
-
-              // Date Availability Card
-              _buildDateAvailabilityCard(),
-              const SizedBox(height: 24),
-
-              // Pricing Breakdown Card
-              _buildPricingBreakdownCard(),
-              const SizedBox(height: 32),
-
-              // Map Section
-              const Text('Where you\'ll be', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              _buildMockMap(),
-              const SizedBox(height: 10),
-              Text(
-                '${widget.destination.area}, ${widget.destination.city}, Tanzania',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Located in a clean and peaceful area with convenient access to nearby points of interest.',
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 13, height: 1.4),
-              ),
-              const SizedBox(height: 32),
-
-              // Host detail card
-              const Text('Meet your Host', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF9FAFB),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey.shade200),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+                  // Bottom text, animated dots, counter
+                  Positioned(
+                    bottom: 30,
+                    left: 24,
+                    right: 24,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        CircleAvatar(
-                          radius: 30,
-                          backgroundImage: AssetImage(
-                            widget.destination.city.toLowerCase().contains('dodoma')
-                                ? "assets/images/man.jpeg"
-                                : "assets/images/man2.jpeg",
+                        Text(
+                          widget.destination.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            shadows: [
+                              Shadow(blurRadius: 8, color: Colors.black54),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 16),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        const SizedBox(height: 8),
+                        Text(
+                          '${widget.destination.area}, ${widget.destination.city}',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(
-                              hostName,
-                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                            // Animated dot indicators
+                            Row(
+                              children: List.generate(images.length, (index) {
+                                final isActive = _currentImageIndex == index;
+                                return AnimatedContainer(
+                                  duration: const Duration(milliseconds: 350),
+                                  curve: Curves.easeInOut,
+                                  margin: const EdgeInsets.only(right: 6),
+                                  width: isActive ? 22 : 7,
+                                  height: 7,
+                                  decoration: BoxDecoration(
+                                    color: isActive
+                                        ? Colors.white
+                                        : Colors.white.withValues(alpha: 0.45),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                );
+                              }),
                             ),
-                            const SizedBox(height: 4),
-                            const Text(
-                              'Superhost • 2 years hosting',
-                              style: TextStyle(color: Colors.grey, fontSize: 13),
+                            // Counter badge
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.25),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.4),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Text(
+                                '${_currentImageIndex + 1} / ${images.length}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ],
                         ),
                       ],
                     ),
-                    const SizedBox(height: 20),
-                    _buildHostDetailRow(Icons.reviews_outlined, '148 reviews (4.8 Rating)'),
-                    const SizedBox(height: 8),
-                    _buildHostDetailRow(Icons.verified_user_outlined, 'Identity Verified (Government ID uploaded)', iconColor: Colors.green.shade700),
-                    const SizedBox(height: 8),
-                    _buildHostDetailRow(Icons.chat_bubble_outline, 'Response rate: 100% (Within an hour)'),
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton(
-                        onPressed: () {},
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          side: const BorderSide(color: Colors.black87),
-                          foregroundColor: Colors.black87,
-                        ),
-                        child: const Text('Contact Host', style: TextStyle(fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 24),
+            ),
+
+
+            Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Top-Rated Facilities',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildFacilityIcon(Icons.restaurant, 'Restaurant'),
+                      _buildFacilityIcon(Icons.local_cafe_outlined, 'Cafe'),
+                      _buildFacilityIcon(Icons.wifi, 'Free Wifi'),
+                      _buildFacilityIcon(Icons.local_parking_outlined, 'Parking'),
+                      _buildFacilityIcon(Icons.business_center_outlined, 'Business'),
+                    ],
+                  ),
+                  const SizedBox(height: 30),
+                  const Text(
+                    'Overview',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildOverviewText(),
+                  const SizedBox(height: 30),
+                  const Text(
+                    'Location',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildRealMap(),
+                  const SizedBox(height: 40),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCircularButton({required IconData icon, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.8),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, size: 20, color: Colors.black87),
+      ),
+    );
+  }
+
+  Widget _buildOverviewText() {
+    const int previewLength = 150;
+    final String fullText = widget.destination.condition.isNotEmpty
+        ? widget.destination.condition
+        : 'Experience the perfect blend of comfort and luxury with our top-rated facilities designed to elevate your stay. From world-class dining and a refreshing pool to high-speed Wi-Fi and a fully equipped business centre, every detail has been thoughtfully curated for your comfort. Whether you\'re here for leisure or business, enjoy seamless service, modern amenities, and an ambience that makes you feel right at home.';
+
+    final bool isTruncatable = fullText.length > previewLength;
+    final String previewText = isTruncatable && !_overviewExpanded
+        ? '${fullText.substring(0, previewLength)}… '
+        : '$fullText ';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        RichText(
+          text: TextSpan(
+            style: const TextStyle(color: Colors.grey, fontSize: 14, height: 1.6),
+            children: [
+              TextSpan(text: previewText),
+              if (isTruncatable)
+                TextSpan(
+                  text: _overviewExpanded ? 'Read Less' : 'Read More',
+                  style: TextStyle(
+                    color: Colors.teal.shade600,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                  recognizer: TapGestureRecognizer()
+                    ..onTap = () {
+                      setState(() {
+                        _overviewExpanded = !_overviewExpanded;
+                      });
+                    },
+                ),
             ],
           ),
         ),
-      ),
+      ],
+    );
+  }
+
+  Widget _buildFacilityIcon(IconData icon, String label) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Icon(icon, color: Colors.black87, size: 24),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 11, color: Colors.black54, fontWeight: FontWeight.w600),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSpecChip(IconData icon, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: Colors.black54),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: Colors.black87)),
+      ],
     );
   }
 
@@ -648,19 +624,9 @@ const SizedBox(width: 6),
     );
   }
 
-  Widget _buildHostDetailRow(IconData icon, String text, {Color? iconColor}) {
-    return Row(
-      children: [
-        Icon(icon, size: 20, color: iconColor ?? Colors.grey.shade700),
-        const SizedBox(width: 12),
-        Text(text, style: TextStyle(color: Colors.grey.shade800, fontSize: 14)),
-      ],
-    );
-  }
-
   Widget _buildPricingBreakdownCard() {
     final pricePerNight = widget.destination.price;
-    final roomTotal = pricePerNight * widget.numNights;
+    final roomTotal = pricePerNight * _numNights;
     const serviceFee = 5000;
     final vat = (roomTotal * 0.18).toInt();
     final grandTotal = roomTotal + serviceFee + vat;
@@ -676,25 +642,9 @@ const SizedBox(width: 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Pricing details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(6)),
-                child: Row(
-                  children: [
-                    Icon(Icons.bolt, color: Colors.green.shade800, size: 12),
-                    const SizedBox(width: 4),
-                    Text('INSTANT BOOK', style: TextStyle(color: Colors.green.shade800, fontSize: 9, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          const Text('Pricing details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
           const SizedBox(height: 16),
-          _buildPriceItemRow('${_formatPrice(pricePerNight)} x ${widget.numNights} nights', _formatPrice(roomTotal)),
+          _buildPriceItemRow('${_formatPrice(pricePerNight)} x $_numNights nights', _formatPrice(roomTotal)),
           const SizedBox(height: 10),
           _buildPriceItemRow('OTA Service fee', _formatPrice(serviceFee)),
           const SizedBox(height: 10),
@@ -723,6 +673,13 @@ const SizedBox(width: 6),
   }
 
   Widget _buildDateAvailabilityCard() {
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    final start = _selectedRange.start;
+    final end   = _selectedRange.end;
+
+    String fullDate(DateTime d) =>
+        '${months[d.month - 1]} ${d.day}, ${d.year}';
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -734,304 +691,138 @@ const SizedBox(width: 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          // ── Header ────────────────────────────────────────────────────────
+          Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Availability & Dates', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-              Text(
-                'Dates Confirmed',
-                style: TextStyle(
-                  color: Colors.black54,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
+              const Text('Availability & Dates',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
+              GestureDetector(
+                onTap: _openDatePicker,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFB71C1C).withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit_calendar_rounded, size: 13, color: Colors.red.shade900),
+                      const SizedBox(width: 4),
+                      Text('Change dates',
+                          style: TextStyle(color: Colors.red.shade900, fontSize: 11, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
+
+          // ── Check-in / Check-out cards ─────────────────────────────────────
           Row(
             children: [
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('CHECK-IN', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey)),
-                      const SizedBox(height: 4),
-                      Text(widget.selectedDatesText.split('–')[0].trim(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                    ],
+                child: GestureDetector(
+                  onTap: _openDatePicker,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.red.shade200, width: 1.4),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.login_rounded, size: 11, color: Colors.red.shade700),
+                            const SizedBox(width: 4),
+                            Text('CHECK-IN',
+                                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.red.shade700)),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(fullDate(start),
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      ],
+                    ),
                   ),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.grey.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('CHECK-OUT', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey)),
-                      const SizedBox(height: 4),
-                      Text(widget.selectedDatesText.split('–')[1].trim(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                    ],
+                child: GestureDetector(
+                  onTap: _openDatePicker,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.red.shade200, width: 1.4),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.logout_rounded, size: 11, color: Colors.red.shade700),
+                            const SizedBox(width: 4),
+                            Text('CHECK-OUT',
+                                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.red.shade700)),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(fullDate(end),
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ],
           ),
+
           const SizedBox(height: 12),
           Row(
             children: [
-              Icon(Icons.calendar_today_outlined, size: 14, color: Colors.green.shade800),
+              Icon(Icons.nights_stay_outlined, size: 14, color: Colors.green.shade800),
               const SizedBox(width: 8),
               Text(
-                'Lodge is fully available for these ${widget.numNights} nights.',
+                '$_numNights ${_numNights == 1 ? 'night' : 'nights'} selected.',
                 style: TextStyle(color: Colors.green.shade800, fontSize: 12, fontWeight: FontWeight.w600),
               ),
             ],
           ),
+
           const SizedBox(height: 20),
-          // Custom Availability Calendar Widget
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Icon(Icons.chevron_left, color: Colors.black54),
-                    Text(
-                      'July 2026', // Mock month for display
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                    ),
-                    const Icon(Icons.chevron_right, color: Colors.black87),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
-                      .map((day) => SizedBox(
-                            width: 30,
-                            child: Center(
-                              child: Text(day, style: TextStyle(color: Colors.grey.shade500, fontSize: 12, fontWeight: FontWeight.w600)),
-                            ),
-                          ))
-                      .toList(),
-                ),
-                const SizedBox(height: 12),
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 7,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 0,
-                    childAspectRatio: 1,
-                  ),
-                  itemCount: 31 + 3, // 3 days offset + 31 days
-                  itemBuilder: (context, index) {
-                    if (index < 3) return const SizedBox(); // Empty slots for month start offset
-                    final day = index - 2;
-                    final isSelected = day >= 14 && day <= (14 + widget.numNights);
-                    final isStart = day == 14;
-                    final isEnd = day == (14 + widget.numNights);
-                    final isPast = day < 14;
 
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: isStart || isEnd
-                            ? Colors.black
-                            : isSelected
-                                ? Colors.grey.shade200
-                                : Colors.transparent,
-                        borderRadius: isStart
-                            ? const BorderRadius.horizontal(left: Radius.circular(20))
-                            : isEnd
-                                ? const BorderRadius.horizontal(right: Radius.circular(20))
-                                : BorderRadius.circular(0),
-                      ),
-                      child: Center(
-                        child: Text(
-                          day.toString(),
-                          style: TextStyle(
-                            color: isStart || isEnd
-                                ? Colors.white
-                                : isPast
-                                    ? Colors.grey.shade400
-                                    : Colors.black87,
-                            fontWeight: isStart || isEnd ? FontWeight.bold : FontWeight.w500,
-                            decoration: isPast ? TextDecoration.lineThrough : null,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Map<String, double> _getCityCoordinates(String city) {
-    final lower = city.toLowerCase();
-    if (lower.contains('dodoma')) {
-      return {'lat': -6.179, 'lon': 35.748};
-    } else if (lower.contains('dar es salaam') || lower.contains('kariakoo')) {
-      return {'lat': -6.816, 'lon': 39.280};
-    } else if (lower.contains('zanzibar')) {
-      return {'lat': -6.166, 'lon': 39.199};
-    } else if (lower.contains('arusha')) {
-      return {'lat': -3.387, 'lon': 36.683};
-    }
-    return {'lat': -6.792, 'lon': 39.208}; // Default Dar es Salaam center
-  }
-
-  String _getStaticMapUrl() {
-    final coords = _getCityCoordinates(widget.destination.city);
-    final lat = coords['lat'];
-    final lon = coords['lon'];
-    return 'https://static-maps.yandex.ru/1.x/?ll=$lon,$lat&z=15&size=500,220&l=map&pt=$lon,$lat,pm2rdm';
-  }
-
-  Widget _buildCustomVectorMap() {
-    final isDar = widget.destination.city.toLowerCase().contains('dar es salaam') || 
-                 widget.destination.city.toLowerCase().contains('kariakoo');
-    return Container(
-      color: const Color(0xFFF4F3F0),
-      child: Stack(
-        children: [
-          if (isDar)
-            Positioned(
-              right: -30, top: -20, bottom: -20,
-              child: Container(
-                width: 120,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFC4E3FC),
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(80),
-                    bottomLeft: Radius.circular(100),
-                  ),
-                ),
-                child: const Center(
-                  child: RotatedBox(
-                    quarterTurns: 3,
-                    child: Text(
-                      'INDIAN OCEAN',
-                      style: TextStyle(
-                        fontSize: 8,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF6DA5D8),
-                        letterSpacing: 2.0,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          Positioned(
-            left: 20, top: 40,
+          // ── Tap-to-change banner ──────────────────────────────────────────
+          GestureDetector(
+            onTap: _openDatePicker,
             child: Container(
-              padding: const EdgeInsets.all(8),
-              width: 90, height: 60,
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
               decoration: BoxDecoration(
-                color: const Color(0xFFD3EAD2),
+                gradient: LinearGradient(
+                  colors: [Colors.red.shade900, Colors.pink.shade700],
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                ),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFC2E2C0), width: 1),
               ),
-              child: const Align(
-                alignment: Alignment.bottomLeft,
-                child: Text(
-                  'City Park',
-                  style: TextStyle(fontSize: 9, color: Color(0xFF558252), fontWeight: FontWeight.bold),
-                ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.calendar_month_rounded, color: Colors.white, size: 18),
+                  SizedBox(width: 8),
+                  Text(
+                    'Pick dates on calendar',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                ],
               ),
-            ),
-          ),
-          Positioned(
-            top: 100, left: -20, right: -20,
-            child: Container(
-              height: 12,
-              decoration: const BoxDecoration(
-                color: Color(0xFFFFEB9C),
-                border: Border.symmetric(
-                  horizontal: BorderSide(color: Color(0xFFEAD09E), width: 1.5),
-                ),
-              ),
-            ),
-          ),
-          const Positioned(
-            top: 101, left: 40,
-            child: Text(
-              'Morogoro Rd / Highway',
-              style: TextStyle(fontSize: 8, color: Color(0xFF8C7355), fontWeight: FontWeight.bold),
-            ),
-          ),
-          Positioned(
-            left: 150, top: -20, bottom: -20,
-            child: Container(
-              width: 10,
-              color: Colors.white,
-            ),
-          ),
-          Positioned(
-            left: 250, top: -20, bottom: -20,
-            child: Container(
-              width: 8,
-              color: Colors.white,
-            ),
-          ),
-          const Positioned(
-            left: 155, top: 25,
-            child: Text(
-              'Samora Ave',
-              style: TextStyle(fontSize: 7, color: Colors.grey, fontWeight: FontWeight.bold),
-            ),
-          ),
-          Positioned(
-            left: -20, right: -20, top: 150,
-            child: Container(
-              height: 8,
-              color: Colors.white,
-            ),
-          ),
-          const Positioned(
-            left: 60, top: 151,
-            child: Text(
-              'Maktaba St',
-              style: TextStyle(fontSize: 7, color: Colors.grey, fontWeight: FontWeight.bold),
-            ),
-          ),
-          Positioned(
-            left: 80, top: 20,
-            child: Row(
-              children: [
-                Icon(Icons.storefront, color: Colors.orange.shade800, size: 12),
-                const SizedBox(width: 4),
-                const Text(
-                  'Shopping Center',
-                  style: TextStyle(fontSize: 8, color: Colors.grey, fontWeight: FontWeight.bold),
-                ),
-              ],
             ),
           ),
         ],
@@ -1039,96 +830,153 @@ const SizedBox(width: 6),
     );
   }
 
-  Widget _buildMockMap() {
-    final coords = _getCityCoordinates(widget.destination.city);
-    final lat = coords['lat']!;
-    final lon = coords['lon']!;
-    
-    return Container(
-      height: 250,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: FlutterMap(
-          options: MapOptions(
-            initialCenter: LatLng(lat, lon),
-            initialZoom: 14.5,
-            interactionOptions: const InteractionOptions(
-              flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+
+
+  Widget _buildCustomMarker() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: const Color(0xFFB71C1C),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white, width: 2),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.hotel, color: Colors.white, size: 14),
+              const SizedBox(width: 6),
+              Text(
+                widget.destination.name,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+        CustomPaint(
+          size: const Size(14, 8),
+          painter: _TrianglePainter(color: const Color(0xFFB71C1C)),
+        ),
+      ],
+    );
+  }
+
+  Future<Uint8List> _getTeardropPinBytes() async {
+    final ui.PictureRecorder recorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(recorder);
+    const double width = 120.0;
+    const double height = 150.0;
+
+    final Paint pinPaint = Paint()
+      ..color = const Color(0xFF003580) // Dark Navy Blue
+      ..style = PaintingStyle.fill;
+
+    final Paint borderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 5.0;
+
+    final Paint dotPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+
+    final Path path = Path();
+    const Offset center = Offset(60, 55);
+    path.addOval(Rect.fromCircle(center: center, radius: 44));
+    path.moveTo(20, 70);
+    path.lineTo(60, 142);
+    path.lineTo(100, 70);
+    path.close();
+
+    canvas.drawPath(path, pinPaint);
+    canvas.drawPath(path, borderPaint);
+    canvas.drawCircle(center, 16.0, dotPaint);
+
+    final ui.Image image = await recorder.endRecording().toImage(width.toInt(), height.toInt());
+    final ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    return byteData!.buffer.asUint8List();
+  }
+
+  Widget _buildRealMap() {
+    final lat = widget.destination.latitude;
+    final lon = widget.destination.longitude;
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => FullscreenMapScreen(destination: widget.destination),
+          ),
+        );
+      },
+      child: Container(
+        height: 215,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.grey.shade300, width: 1.2),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: IgnorePointer(
+            child: MapWidget(
+              key: const ValueKey("bookRoomMap"),
+              styleUri: MapboxStyles.MAPBOX_STREETS,
+              cameraOptions: CameraOptions(
+                center: Point(coordinates: Position(lon, lat)),
+                zoom: 15.0,
+                pitch: 30,
+                bearing: 0,
+              ),
+              onMapCreated: (mapboxMap) async {
+                final pinBytes = await _getTeardropPinBytes();
+                mapboxMap.annotations.createPointAnnotationManager().then((manager) {
+                  manager.create(PointAnnotationOptions(
+                    geometry: Point(coordinates: Position(lon, lat)),
+                    image: pinBytes,
+                    iconSize: 0.9,
+                    textField: widget.destination.name,
+                    textSize: 11.5,
+                    textColor: const Color(0xFF0F172A).toARGB32(),
+                    textHaloColor: Colors.white.toARGB32(),
+                    textHaloWidth: 2.0,
+                    textOffset: const [0.0, 1.0],
+                    textAnchor: TextAnchor.TOP,
+                  ));
+                });
+              },
             ),
           ),
-          children: [
-            TileLayer(
-              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName: 'com.fastnet.ota',
-            ),
-            MarkerLayer(
-              markers: [
-                Marker(
-                  point: LatLng(lat, lon),
-                  width: 80,
-                  height: 80,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      AnimatedBuilder(
-                        animation: _pulseAnimation,
-                        builder: (context, child) {
-                          return Container(
-                            width: _pulseAnimation.value * 2,
-                            height: _pulseAnimation.value * 2,
-                            decoration: BoxDecoration(
-                              color: Colors.red.withValues(alpha: (1.0 - _pulseController.value).clamp(0.0, 1.0)),
-                              shape: BoxShape.circle,
-                            ),
-                          );
-                        },
-                      ),
-                      const Icon(Icons.location_on, color: Colors.red, size: 40),
-                      Positioned(
-                        top: 8,
-                        child: Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      )
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
         ),
       ),
     );
   }
+}
 
-  Widget _buildMapControl(IconData icon) {
-    return Container(
-      width: 32,
-      height: 32,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.15),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Icon(icon, size: 18, color: Colors.black87),
-    );
+class _TrianglePainter extends CustomPainter {
+  final Color color;
+  const _TrianglePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..close();
+    canvas.drawPath(path, paint);
   }
+
+  @override
+  bool shouldRepaint(_TrianglePainter old) => old.color != color;
 }
 
 // Fullscreen interactive gallery viewer with zoomable image support
@@ -1199,6 +1047,156 @@ class _FullscreenGalleryScreenState extends State<FullscreenGalleryScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _TrustPill extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final Color iconColor;
+  final Color bgColor;
+  final bool pulse;
+
+  const _TrustPill({
+    Key? key,
+    required this.icon,
+    required this.label,
+    required this.iconColor,
+    required this.bgColor,
+    this.pulse = false,
+  }) : super(key: key);
+
+  @override
+  State<_TrustPill> createState() => _TrustPillState();
+}
+
+class _TrustPillState extends State<_TrustPill>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _pulseCtrl;
+  Animation<double>? _scaleAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.pulse) {
+      _pulseCtrl = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 1400),
+      )..repeat(reverse: true);
+      _scaleAnim = Tween<double>(begin: 0.96, end: 1.04).animate(
+        CurvedAnimation(parent: _pulseCtrl!, curve: Curves.easeInOut),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulseCtrl?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget pill = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: widget.bgColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: widget.iconColor.withValues(alpha: 0.15), width: 0.8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(widget.icon, size: 13, color: widget.iconColor),
+          const SizedBox(width: 4),
+          Text(
+            widget.label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: widget.iconColor.withValues(alpha: 0.95),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (widget.pulse && _scaleAnim != null) {
+      return AnimatedBuilder(
+        animation: _scaleAnim!,
+        builder: (context, child) {
+          return Transform.scale(
+            scale: _scaleAnim!.value,
+            child: child,
+          );
+        },
+        child: pill,
+      );
+    }
+
+    return pill;
+  }
+}
+
+
+
+class PulseMarker extends StatefulWidget {
+  const PulseMarker({Key? key}) : super(key: key);
+
+  @override
+  State<PulseMarker> createState() => _PulseMarkerState();
+}
+
+class _PulseMarkerState extends State<PulseMarker> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    )..repeat(reverse: true);
+    _animation = Tween<double>(begin: 1.0, end: 1.5).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut,
+    ));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Transform.scale(
+          scale: _animation.value,
+          child: child,
+        );
+      },
+      child: Container(
+        width: 16,
+        height: 16,
+        decoration: BoxDecoration(
+          color: Colors.red.shade700,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.red.withValues(alpha: 0.4),
+              blurRadius: 8,
+              spreadRadius: 2,
+            )
+          ],
+        ),
       ),
     );
   }

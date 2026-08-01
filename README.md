@@ -20,5 +20,5 @@ To run the FASTNET mobile front-end application locally, ensure you have the Flu
 ## Production Application Architecture
 
 - **State Management**: Scalable architecture using the `provider` package (`BookingsProvider`, `WishlistProvider`, `UserSessionProvider`).
-- **Interactive Map Engine**: Leverages high-performance maps via `flutter_map` and coordinates management using `latlong2`.
+- **Interactive Map Engine**: Uses Mapbox for interactive lodge maps, routing, and location-based exploration.
 - **UI Customizations**: Dedicated design systems with custom typography (`AirbnbCereal` fonts) and consistent professional spacing.

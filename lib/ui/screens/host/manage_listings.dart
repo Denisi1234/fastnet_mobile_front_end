@@ -81,6 +81,8 @@ class _ManageListingsState extends State<ManageListings> {
                               baths: dest.baths,
                               condition: dest.condition,
                               amenities: dest.amenities,
+                              latitude: dest.latitude,
+                              longitude: dest.longitude,
                             );
                           }
                         });

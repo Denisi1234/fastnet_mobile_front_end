@@ -3,8 +3,7 @@ import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/book_room.
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 import 'package:fastnet_mobile_front_end/providers/wishlist_provider.dart';
 import 'package:provider/provider.dart';
-import 'package:fastnet_mobile_front_end/ui/widgets/destination.dart';
-import 'package:fastnet_mobile_front_end/ui/widgets/empty_state.dart';
+
 import 'package:flutter/material.dart';
 
 class WishlistScreen extends StatefulWidget {
@@ -162,200 +161,32 @@ class _WishlistScreenState extends State<WishlistScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(vertical: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header title and Create Wishlist Button
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header title
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24.0, 24.0, 24.0, 16.0),
+              child: Text(
+                'Wishlists',
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                  letterSpacing: -0.8,
+                ),
+              ),
+            ),
+            // Scrollable Content
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Wishlists',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
-                        letterSpacing: -0.8,
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: _showCreateWishlistDialog,
-                      icon: Icon(Icons.add, color: Colors.red.shade900, size: 18),
-                      label: Text(
-                        'New List',
-                        style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold, fontSize: 14),
-                      ),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          side: BorderSide(color: Colors.red.shade900),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
 
-              // Wishlist groups horizontal switcher
-              SizedBox(
-                height: 135, // Increased to 135 to fix RenderFlex overflow
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: groups.length,
-                  itemBuilder: (context, index) {
-                    final group = groups[index];
-                    final isSelected = _selectedGroupIndex == index;
-                    return GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _selectedGroupIndex = index;
-                        });
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        width: 155,
-                        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: isSelected ? Colors.white : Colors.grey.shade50,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: isSelected ? Colors.red.shade900 : Colors.grey.shade200,
-                            width: isSelected ? 2.0 : 1.0,
-                          ),
-                          boxShadow: isSelected
-                              ? [BoxShadow(color: Colors.red.shade900.withValues(alpha: 0.05), blurRadius: 8, offset: const Offset(0, 3))]
-                              : [],
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Icon(
-                                  group.isPrivate ? Icons.lock_outline : Icons.public_outlined,
-                                  size: 14,
-                                  color: Colors.grey.shade600,
-                                ),
-                                PopupMenuButton<String>(
-                                  padding: EdgeInsets.zero,
-                                  icon: const Icon(Icons.more_vert, size: 14, color: Colors.black54),
-                                  onSelected: (value) {
-                                    if (value == 'rename') {
-                                      _showRenameWishlistDialog(index);
-                                    } else if (value == 'privacy') {
-                                      wishlistProvider.toggleGroupPrivacy(index);
-                                    } else if (value == 'delete') {
-                                      wishlistProvider.deleteGroup(index);
-                                      setState(() {
-                                        if (_selectedGroupIndex >= groups.length) {
-                                          _selectedGroupIndex = 0;
-                                        }
-                                      });
-                                    }
-                                  },
-                                  itemBuilder: (context) => [
-                                    const PopupMenuItem(
-                                      value: 'rename',
-                                      child: Text('Rename', style: TextStyle(fontSize: 13)),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'privacy',
-                                      child: Text(
-                                        group.isPrivate ? 'Make Public' : 'Make Private',
-                                        style: const TextStyle(fontSize: 13),
-                                      ),
-                                    ),
-                                    if (index > 0) // Cannot delete default Favorites folder
-                                      const PopupMenuItem(
-                                        value: 'delete',
-                                        child: Text('Delete', style: TextStyle(color: Colors.red, fontSize: 13)),
-                                      ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  group.name,
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${group.items.length} stay${group.items.length == 1 ? '' : 's'}',
-                                  style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
-                                ),
-                              ],
-                            )
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 24),
 
-              // Active selected group items listing
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                child: Text(
-                  'Saved in ${activeGroup.name}',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
 
-              if (savedList.isNotEmpty)
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  itemCount: savedList.length,
-                  itemBuilder: (context, index) {
-                    final item = savedList[index];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 20.0),
-                      child: DestinationWidget(
-                        destination: item,
-                        index: index,
-                        numNights: 3,
-                        selectedDatesText: 'Jun 25 – 28',
-                      ),
-                    );
-                  },
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                  child: EmptyStateWidget(
-                    icon: Icons.bookmark_border_outlined,
-                    title: 'No stays in this wishlist',
-                    description: 'Keep exploring and tap the heart icon to save listings to "${activeGroup.name}".',
-                    buttonText: 'Find Lodges',
-                    onButtonPressed: () {
-                      // Navigate or toggle tab focus back
-                    },
-                  ),
-                ),
 
               if (visitedList.isNotEmpty) ...[
                 const SizedBox(height: 32),
@@ -445,7 +276,10 @@ class _WishlistScreenState extends State<WishlistScreen> {
           ),
         ),
       ),
-    );
+    ],
+  ),
+),
+);
   }
 
 
@@ -458,8 +292,6 @@ class _WishlistScreenState extends State<WishlistScreen> {
           MaterialPageRoute(
             builder: (context) => BookRoom(
               destination: item,
-              selectedDatesText: 'Jun 25 – 28',
-              numNights: 3,
             ),
           ),
         );

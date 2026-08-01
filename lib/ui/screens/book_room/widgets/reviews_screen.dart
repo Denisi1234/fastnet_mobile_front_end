@@ -92,7 +92,112 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Write a review block (collapsible or neat input card)
+            // Overall Score Card
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Row(
+                children: [
+                  const Text(
+                    '4.8',
+                    style: TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: Colors.black87),
+                  ),
+                  const SizedBox(width: 16),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Excellent', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: List.generate(5, (i) => Icon(Icons.star, color: i < 5 ? Colors.amber : Colors.grey, size: 16)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Based on ${_reviews.length} guest reviews',
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Airbnb-style rating category scores
+            const Text('Rating Metrics', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Column(
+              children: [
+                _buildRatingMetric('Cleanliness', 4.8),
+                _buildRatingMetric('Accuracy', 4.9),
+                _buildRatingMetric('Communication', 4.7),
+                _buildRatingMetric('Location', 4.9),
+                _buildRatingMetric('Check-in', 4.8),
+                _buildRatingMetric('Value', 4.6),
+              ],
+            ),
+            const SizedBox(height: 32),
+
+            // Reviews List
+            Text('All Reviews (${_reviews.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _reviews.length,
+              itemBuilder: (context, index) {
+                final rev = _reviews[index];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 20,
+                            backgroundImage: AssetImage(rev['avatar']),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(rev['guestName'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                              const SizedBox(height: 2),
+                              Text(rev['date'], style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
+                            ],
+                          ),
+                          const Spacer(),
+                          Row(
+                            children: List.generate(5, (starIndex) {
+                              return Icon(
+                                Icons.star,
+                                color: starIndex < rev['rating'] ? Colors.black87 : Colors.grey.shade300,
+                                size: 14,
+                              );
+                            }),
+                          )
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        rev['comment'],
+                        style: TextStyle(color: Colors.grey.shade800, fontSize: 14, height: 1.4),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 24),
+
+            // Write a review block (moved to the bottom for better UX flow)
             const Text('Write a Guest Review', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             Container(
@@ -183,74 +288,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 32),
-
-            // Airbnb-style rating category scores
-            const Text('Rating Metrics', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            Column(
-              children: [
-                _buildRatingMetric('Cleanliness', 4.8),
-                _buildRatingMetric('Accuracy', 4.9),
-                _buildRatingMetric('Communication', 4.7),
-                _buildRatingMetric('Location', 4.9),
-                _buildRatingMetric('Check-in', 4.8),
-                _buildRatingMetric('Value', 4.6),
-              ],
-            ),
-            const SizedBox(height: 32),
-
-            // Reviews List
-            Text('All Reviews (${_reviews.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: _reviews.length,
-              itemBuilder: (context, index) {
-                final rev = _reviews[index];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 20,
-                            backgroundImage: AssetImage(rev['avatar']),
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(rev['guestName'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                              const SizedBox(height: 2),
-                              Text(rev['date'], style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
-                            ],
-                          ),
-                          const Spacer(),
-                          Row(
-                            children: List.generate(5, (starIndex) {
-                              return Icon(
-                                Icons.star,
-                                color: starIndex < rev['rating'] ? Colors.black87 : Colors.grey.shade300,
-                                size: 14,
-                              );
-                            }),
-                          )
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        rev['comment'],
-                        style: TextStyle(color: Colors.grey.shade800, fontSize: 14, height: 1.4),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+            const SizedBox(height: 24),
           ],
         ),
       ),

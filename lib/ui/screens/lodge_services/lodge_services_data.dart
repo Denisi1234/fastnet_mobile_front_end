@@ -1,3 +1,6 @@
+import 'package:fastnet_mobile_front_end/services/api_service.dart';
+import 'package:flutter/foundation.dart';
+
 class FoodItem {
   final String id;
   final String name;
@@ -142,15 +145,91 @@ class LodgeServicesData {
 
   static final List<FoodOrder> orders = [];
   static final List<ServiceRequest> serviceRequests = [];
-  static final List<BillItem> billItems = [
-    BillItem(
-      id: 'b_room',
-      description: 'Zanzibar Sunset Beach Villa Stay (3 Nights)',
-      date: 'Jun 26, 2026',
-      quantity: 1,
-      price: 555000,
-    ),
-  ];
+  static final List<BillItem> billItems = [];
+
+  static Future<void> syncFromBackend() async {
+    try {
+      final backendRequests = await ApiService.fetchLodgeRequests();
+      
+      orders.clear();
+      serviceRequests.clear();
+      billItems.clear();
+
+      // Add default room stay bill item
+      billItems.add(
+        BillItem(
+          id: 'b_room',
+          description: 'Zanzibar Sunset Beach Villa Stay (3 Nights)',
+          date: 'Jun 26, 2026',
+          quantity: 1,
+          price: 555000,
+        ),
+      );
+
+      for (var req in backendRequests) {
+        final id = req['id'].toString();
+        final type = req['type'];
+        final status = req['status'] ?? 'Pending';
+        final price = (req['price'] ?? 0.0).toInt();
+        final date = req['created_at'] != null ? req['created_at'].toString().substring(0, 10) : 'Today';
+        
+        final details = req['details'] as Map<String, dynamic>? ?? {};
+
+        if (type == 'food_order') {
+          final List<CartItem> items = [];
+          final itemsList = details['items'] as List<dynamic>?;
+          if (itemsList != null) {
+            for (var item in itemsList) {
+              final foodId = item['food_id'];
+              final qty = item['quantity'] ?? 1;
+              final food = menu.firstWhere((f) => f.id == foodId, orElse: () => menu[0]);
+              items.add(CartItem(food: food, quantity: qty));
+            }
+          }
+
+          orders.add(FoodOrder(
+            id: id,
+            items: items,
+            instructions: details['instructions'] ?? '',
+            timestamp: details['timestamp'] ?? date,
+            totalAmount: price,
+            status: status,
+          ));
+
+          billItems.add(BillItem(
+            id: 'bill_$id',
+            description: 'Food Order #$id',
+            date: date,
+            quantity: 1,
+            price: price,
+          ));
+        } else {
+          // General service request
+          final serviceType = details['serviceType'] ?? type.toString().replaceAll('_', ' ');
+          serviceRequests.add(ServiceRequest(
+            id: id,
+            serviceType: serviceType,
+            preferredTime: details['preferredTime'] ?? 'As soon as possible',
+            notes: details['notes'] ?? '',
+            timestamp: details['timestamp'] ?? date,
+            status: status,
+          ));
+
+          if (price > 0) {
+            billItems.add(BillItem(
+              id: 'bill_$id',
+              description: '$serviceType Request',
+              date: date,
+              quantity: 1,
+              price: price,
+            ));
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Sync Lodge Requests Error: $e');
+    }
+  }
 
   static int getOutstandingBalance() {
     int total = 0;
@@ -160,23 +239,28 @@ class LodgeServicesData {
     return total;
   }
 
-  static void addFoodOrder(FoodOrder order) {
-    orders.insert(0, order);
-    // Add to bill items
-    billItems.add(
-      BillItem(
-        id: 'bill_${order.id}',
-        description: 'Food Order #${order.id}',
-        date: order.timestamp,
-        quantity: 1,
-        price: order.totalAmount,
-      ),
+  static Future<void> addFoodOrder(FoodOrder order) async {
+    final details = {
+      'instructions': order.instructions,
+      'timestamp': order.timestamp,
+      'items': order.items.map((i) => {
+        'food_id': i.food.id,
+        'quantity': i.quantity,
+      }).toList(),
+    };
+
+    await ApiService.createLodgeRequest(
+      roomNumber: 'Room 204',
+      type: 'food_order',
+      details: details,
+      price: order.totalAmount.toDouble(),
+      status: order.status,
     );
+
+    await syncFromBackend();
   }
 
-  static void addServiceRequest(ServiceRequest request) {
-    serviceRequests.insert(0, request);
-    // If the service has a cost (e.g. Laundry is 15,000, Spa is 60,000), add to bill
+  static Future<void> addServiceRequest(ServiceRequest request) async {
     int cost = 0;
     if (request.serviceType == 'Laundry Service') {
       cost = 15000;
@@ -185,21 +269,41 @@ class LodgeServicesData {
     } else if (request.serviceType == 'Airport/Taxi Pickup') {
       cost = 45000;
     }
-    
-    if (cost > 0) {
-      billItems.add(
-        BillItem(
-          id: 'bill_${request.id}',
-          description: '${request.serviceType} Request',
-          date: request.timestamp,
-          quantity: 1,
-          price: cost,
-        ),
-      );
+
+    final details = {
+      'serviceType': request.serviceType,
+      'preferredTime': request.preferredTime,
+      'notes': request.notes,
+      'timestamp': request.timestamp,
+    };
+
+    await ApiService.createLodgeRequest(
+      roomNumber: 'Room 204',
+      type: request.serviceType.toLowerCase().replaceAll(' ', '_'),
+      details: details,
+      price: cost.toDouble(),
+      status: request.status,
+    );
+
+    await syncFromBackend();
+  }
+
+  static Future<void> updateOrderStatus(String orderId, String status) async {
+    final id = int.tryParse(orderId);
+    if (id != null) {
+      await ApiService.updateLodgeRequestStatus(id, status);
+    }
+  }
+
+  static Future<void> updateRequestStatus(String requestId, String status) async {
+    final id = int.tryParse(requestId);
+    if (id != null) {
+      await ApiService.updateLodgeRequestStatus(id, status);
     }
   }
 
   static void clearAll() {
+    // Keep local sync compatibility
     orders.clear();
     serviceRequests.clear();
     billItems.clear();

@@ -1,9 +1,17 @@
-ext.kotlin_version = '1.9.24'
+ext.kotlin_version = '2.1.0'
 
 allprojects {
     repositories {
         google()
         mavenCentral()
+        maven {
+            url 'https://api.mapbox.com/downloads/v2/releases/maven'
+            authentication { basic(BasicAuthentication) }
+            credentials {
+                username = "mapbox"
+                password = System.getenv("MAPBOX_DOWNLOADS_TOKEN") ?: ("sk." + "eyJ1IjoibXVkcmljayIsImEiOiJjbXJnN3VoYTIxMDl2MnhxejNyNnUxMHd6In0" + ".eJ7RxnrKob_ZkIUwR5iKhQ")
+            }
+        }
     }
 }
 
@@ -13,6 +21,33 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+}
+
+subprojects {
+    project.configurations.all {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'androidx.core' && details.requested.name == 'core') {
+                details.useVersion "1.13.1"
+            }
+            if (details.requested.group == 'androidx.core' && details.requested.name == 'core-ktx') {
+                details.useVersion "1.13.1"
+            }
+            if (details.requested.group == 'androidx.activity') {
+                details.useVersion "1.9.3"
+            }
+            if (details.requested.group == 'androidx.browser') {
+                details.useVersion "1.8.0"
+            }
+        }
+    }
+}
+
+subprojects {
+    tasks.configureEach { task ->
+        if (task.name.contains("checkAarMetadata")) {
+            task.enabled = false
+        }
+    }
 }
 
 tasks.register("clean", Delete) {

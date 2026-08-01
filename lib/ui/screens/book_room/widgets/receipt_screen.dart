@@ -1,4 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 class ReceiptScreen extends StatelessWidget {
   final String bookingCode;
@@ -11,7 +17,8 @@ class ReceiptScreen extends StatelessWidget {
   final String paymentMethod;
   final int numNights;
   final int pricePerNight;
-  final List<Map<String, dynamic>> extraServices; // ordered food, spa, etc.
+  final String? paymentTime;
+  final List<Map<String, dynamic>> extraServices;
 
   const ReceiptScreen({
     Key? key,
@@ -25,31 +32,614 @@ class ReceiptScreen extends StatelessWidget {
     required this.paymentMethod,
     required this.numNights,
     required this.pricePerNight,
+    this.paymentTime,
     this.extraServices = const [],
   }) : super(key: key);
 
   String _formatPrice(int price) {
-    return 'TSh ${price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}';
+    return 'TSh ${price.toString().replaceAllMapped(RegExp(r"(\d{1,3})(?=(\d{3})+(?!\d))"), (Match m) => "${m[1]},")}';
   }
 
-  void _simulateDownload(BuildContext context) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return const DownloadSimulationDialog();
-      },
-    );
+  String _toAscii(String input) {
+    return String.fromCharCodes(input.runes.map((char) {
+      if (char > 127) {
+        if (char == 0x2013 || char == 0x2014 || char == 0x2212) return 0x2d;
+        if (char == 0x2022) return 0x2d;
+        if (char == 0x00A0) return 0x20;
+        return 0x20;
+      }
+      return char;
+    }));
   }
 
-  void _simulateShare(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Sharing options opened! Link copied to clipboard.'),
-        backgroundColor: Colors.blue,
-        behavior: SnackBarBehavior.floating,
+  // ───────────────────────────────────────────────────────────────────────────
+  // PDF GENERATION (EXACT MATCH TO REFERENCE DESIGN)
+  // ───────────────────────────────────────────────────────────────────────────
+  Future<File> _generatePdf(int grandTotal, int roomTotal, int extraTotal, int serviceFee, String transactionId, String paymentTime) async {
+    final pdf = pw.Document();
+
+    final cleanDates = _toAscii(dates);
+    final cleanLodgeName = _toAscii(lodgeName);
+    final cleanRoomNumber = _toAscii(roomNumber);
+    final cleanLocation = _toAscii(location);
+    final cleanGuestName = _toAscii(guestName).toUpperCase();
+
+    final arrivalDate = cleanDates.split(' - ').first;
+    final departureDate = cleanDates.contains('-') ? cleanDates.split('-').last.trim() : 'Next Day';
+    final refNo = '337038${bookingCode.replaceAll('-', '').substring(0, 4)}';
+
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(22),
+        build: (pw.Context context) {
+          return pw.Container(
+            padding: const pw.EdgeInsets.all(18),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(color: PdfColors.black, width: 1.0),
+            ),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                // ── 1. Top Header ──────────────────────────────────────────
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    // Logo & Dots
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.RichText(
+                          text: pw.TextSpan(
+                            children: [
+                              pw.TextSpan(
+                                text: 'FASTNET',
+                                style: pw.TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: pw.FontWeight.bold,
+                                  color: PdfColors.blue900,
+                                ),
+                              ),
+                              pw.TextSpan(
+                                text: 'STAYS',
+                                style: pw.TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: pw.FontWeight.bold,
+                                  color: PdfColors.red900,
+                                ),
+                              ),
+                              pw.TextSpan(
+                                text: '.com',
+                                style: pw.TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: pw.FontWeight.bold,
+                                  color: PdfColors.grey700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        pw.SizedBox(height: 3),
+                        pw.Row(
+                          children: [
+                            _pdfDot(PdfColors.red),
+                            _pdfDot(PdfColors.orange),
+                            _pdfDot(PdfColors.yellow),
+                            _pdfDot(PdfColors.green),
+                            _pdfDot(PdfColors.blue),
+                          ],
+                        ),
+                      ],
+                    ),
+                    // Title
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.end,
+                        children: [
+                          pw.RichText(
+                            text: pw.TextSpan(
+                              children: [
+                                pw.TextSpan(
+                                  text: 'Booking ',
+                                  style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                                ),
+                                pw.TextSpan(
+                                  text: 'Confirmation',
+                                  style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold, color: PdfColors.red900),
+                                ),
+                              ],
+                            ),
+                          ),
+                          pw.SizedBox(height: 2),
+                          pw.Text(
+                            'Please present either an electronic or paper copy of your booking confirmation upon check-in.',
+                            style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey800),
+                            textAlign: pw.TextAlign.end,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 10),
+
+                // Full-width Grey Watermark Band
+                pw.Container(
+                  width: double.infinity,
+                  padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                  color: PdfColors.grey400,
+                  child: pw.Text(
+                    'fastnetstays.com    fastnetstays.com    fastnetstays.com    fastnetstays.com    fastnetstays.com    fastnetstays.com',
+                    style: pw.TextStyle(fontSize: 8.5, color: PdfColors.white, fontWeight: pw.FontWeight.bold),
+                  ),
+                ),
+                pw.SizedBox(height: 14),
+
+                // ── 2. Top Main Section (2 Columns) ─────────────────────────
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    // Left Column Details
+                    pw.Expanded(
+                      flex: 12,
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          _pdfDetailRow('Booking ID :', bookingCode, isBold: true),
+                          _pdfDetailRow('Booking Reference No :', refNo, isBold: true),
+                          _pdfDetailRow('Client :', cleanGuestName, isBold: true),
+                          _pdfDetailRow('Member ID :', '53370111', isBold: true),
+                          _pdfDetailRow('Country of Residence :', 'Tanzania', isBold: true),
+                          _pdfDetailRow('Property Contact :', guestPhone.isNotEmpty ? guestPhone : '+255 700 000 000', isBold: true),
+                          pw.SizedBox(height: 5),
+                          // Property in white box
+                          pw.Row(
+                            crossAxisAlignment: pw.CrossAxisAlignment.start,
+                            children: [
+                              pw.SizedBox(
+                                width: 110,
+                                child: pw.Text('Property :', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
+                              ),
+                              pw.Expanded(
+                                child: pw.Container(
+                                  padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 3.5),
+                                  decoration: pw.BoxDecoration(
+                                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                                    color: PdfColors.white,
+                                  ),
+                                  child: pw.Text(cleanLodgeName, style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold)),
+                                ),
+                              ),
+                            ],
+                          ),
+                          pw.SizedBox(height: 4),
+                          // Room Number in white box
+                          pw.Row(
+                            crossAxisAlignment: pw.CrossAxisAlignment.start,
+                            children: [
+                              pw.SizedBox(
+                                width: 110,
+                                child: pw.Text('Room Assigned :', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
+                              ),
+                              pw.Expanded(
+                                child: pw.Container(
+                                  padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 3.5),
+                                  decoration: pw.BoxDecoration(
+                                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                                    color: PdfColors.white,
+                                  ),
+                                  child: pw.Text('Room $cleanRoomNumber', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold)),
+                                ),
+                              ),
+                            ],
+                          ),
+                          pw.SizedBox(height: 4),
+                          // Address in white box
+                          pw.Row(
+                            crossAxisAlignment: pw.CrossAxisAlignment.start,
+                            children: [
+                              pw.SizedBox(
+                                width: 110,
+                                child: pw.Text('Address :', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
+                              ),
+                              pw.Expanded(
+                                child: pw.Container(
+                                  padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 3.5),
+                                  decoration: pw.BoxDecoration(
+                                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                                    color: PdfColors.white,
+                                  ),
+                                  child: pw.Text('$cleanLocation, Tanzania', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    pw.SizedBox(width: 12),
+
+                    // Right Column Form Box Panel (Grey Container)
+                    pw.Expanded(
+                      flex: 11,
+                      child: pw.Container(
+                        padding: const pw.EdgeInsets.all(8),
+                        color: PdfColors.grey200,
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: [
+                            _pdfFormBox('Number of Rooms :', '1'),
+                            _pdfFormBox('Number of Extra Beds :', '0'),
+                            _pdfFormBox('Number of Adults :', '2'),
+                            _pdfFormBox('Number of Children :', '0'),
+                            _pdfFormBox('Room Type :', 'Standard King Room', isBold: true),
+                            _pdfFormBox('Room Number :', 'Room $cleanRoomNumber', isBold: true),
+                            _pdfFormBox('Promotion :', ''),
+                            pw.SizedBox(height: 5),
+                            pw.Text(
+                              'For Full Promotion details and conditions see confirmation email',
+                              style: const pw.TextStyle(fontSize: 6.5, color: PdfColors.grey800),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 14),
+
+                // ── 3. Cancellation Policy Box ──────────────────────────────
+                pw.Container(
+                  width: double.infinity,
+                  padding: const pw.EdgeInsets.all(8),
+                  color: PdfColors.grey200,
+                  child: pw.RichText(
+                    text: pw.TextSpan(
+                      style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.black),
+                      children: [
+                        pw.TextSpan(text: 'Cancellation Policy: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                        const pw.TextSpan(
+                          text: 'Any cancellation received will incur a charge of 34% of the booking value. Failure to arrive at your hotel or property will be treated as a No-Show and will incur a charge of 100% of the booking value (Hotel policy).',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                pw.SizedBox(height: 8),
+
+                // ── 4. Benefits Included Box ────────────────────────────────
+                pw.Container(
+                  width: double.infinity,
+                  padding: const pw.EdgeInsets.all(8),
+                  color: PdfColors.grey200,
+                  child: pw.Text(
+                    'Benefits Included: -',
+                    style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                  ),
+                ),
+                pw.SizedBox(height: 14),
+
+                // ── 5. Arrival / Departure & Payment Details Box ─────────────
+                pw.Container(
+                  padding: const pw.EdgeInsets.all(8),
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                  ),
+                  child: pw.Column(
+                    children: [
+                      // Top Row: Arrival / Departure
+                      pw.Row(
+                        children: [
+                          pw.Expanded(
+                            child: pw.Row(
+                              children: [
+                                pw.Text('Arrival :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                                pw.SizedBox(width: 6),
+                                pw.Expanded(
+                                  child: pw.Container(
+                                    padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                                    color: PdfColors.grey300,
+                                    child: pw.Text(arrivalDate, style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          pw.SizedBox(width: 14),
+                          pw.Expanded(
+                            child: pw.Row(
+                              children: [
+                                pw.Text('Departure :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                                pw.SizedBox(width: 6),
+                                pw.Expanded(
+                                  child: pw.Container(
+                                    padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                                    color: PdfColors.grey300,
+                                    child: pw.Text(departureDate, style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      pw.SizedBox(height: 10),
+
+                      // Bottom Row: Payment Details + Stamp & QR
+                      pw.Row(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          // Left Payment Note Panel
+                          pw.Expanded(
+                            flex: 14,
+                            child: pw.Column(
+                              crossAxisAlignment: pw.CrossAxisAlignment.start,
+                              children: [
+                                pw.Text('Payment Details :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                                pw.SizedBox(height: 4),
+                                pw.Container(
+                                  width: double.infinity,
+                                  padding: const pw.EdgeInsets.all(7),
+                                  color: PdfColors.grey200,
+                                  child: pw.Column(
+                                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                                    children: [
+                                      pw.RichText(
+                                        text: pw.TextSpan(
+                                          style: const pw.TextStyle(fontSize: 7.5),
+                                          children: [
+                                            pw.TextSpan(text: 'Please note: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.red900)),
+                                            const pw.TextSpan(text: 'Payment for this booking has been processed via FastNetStays. Payment confirmation is verified by property.', style: pw.TextStyle(color: PdfColors.black)),
+                                          ],
+                                        ),
+                                      ),
+                                      pw.SizedBox(height: 5),
+                                      pw.RichText(
+                                        text: pw.TextSpan(
+                                          style: const pw.TextStyle(fontSize: 7.5),
+                                          children: [
+                                            pw.TextSpan(text: 'Note to property: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.red900)),
+                                            pw.TextSpan(text: 'Reservation was made under FastNetStays booking ID $bookingCode', style: const pw.TextStyle(color: PdfColors.black)),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          pw.SizedBox(width: 10),
+
+                          // Right Authorized Stamp & Signature + QR Box
+                          pw.Expanded(
+                            flex: 9,
+                            child: pw.Container(
+                              padding: const pw.EdgeInsets.all(6),
+                              decoration: pw.BoxDecoration(
+                                border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                                color: PdfColors.white,
+                              ),
+                              child: pw.Column(
+                                children: [
+                                  pw.BarcodeWidget(
+                                    barcode: pw.Barcode.qrCode(),
+                                    data: 'FASTNETSTAYS-BOOKING:$bookingCode|LODGE:$cleanLodgeName|ROOM:$cleanRoomNumber|GUEST:$cleanGuestName',
+                                    width: 62,
+                                    height: 62,
+                                  ),
+                                  pw.SizedBox(height: 4),
+                                  pw.Text(
+                                    'Authorized Stamp & Signature',
+                                    style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900),
+                                    textAlign: pw.TextAlign.center,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                pw.SizedBox(height: 14),
+
+                // ── 6. Remarks ──────────────────────────────────────────────
+                pw.Text('Remarks :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                pw.SizedBox(height: 2),
+                pw.Text('Included : Taxes and fees ${_formatPrice(grandTotal - roomTotal)}', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold)),
+                pw.SizedBox(height: 2),
+                pw.Text('NonSmoke', style: const pw.TextStyle(fontSize: 7.5)),
+                pw.SizedBox(height: 2),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Expanded(
+                      child: pw.Text('All special requests are subject to availability upon arrival', style: const pw.TextStyle(fontSize: 7.5)),
+                    ),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(
+                      child: pw.Text('For any issues or questions, please visit www.fastnetstays.com/support.', style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.grey800), textAlign: pw.TextAlign.end),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 14),
+
+                // ── 7. Notes Box ────────────────────────────────────────────
+                pw.Container(
+                  width: double.infinity,
+                  padding: const pw.EdgeInsets.all(10),
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                  ),
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text('Notes', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                      pw.SizedBox(height: 6),
+                      _pdfNoteItem('1.', 'At check-in, you must present a valid photo ID with your address confirming the same name as the lead guest on the booking. For bookings paid with a credit card, you may also need to present the card used to make the payment. Failure to do so may result in the hotel requesting additional payment or your reservation not being honored.', isImportant: true),
+                      pw.SizedBox(height: 5),
+                      _pdfNoteItem('2.', 'All rooms are guaranteed on the day of arrival. In the case of a no-show, your room(s) will be released and you will be subject to the terms and conditions of the Cancellation/No-Show Policy specified at the time you made the booking as well as noted in the Confirmation Email.'),
+                      pw.SizedBox(height: 5),
+                      _pdfNoteItem('3.', 'The total price for this booking does not include mini-bar items, telephone usage, laundry service, etc. The property will bill you directly.'),
+                      pw.SizedBox(height: 5),
+                      _pdfNoteItem('4.', 'In cases where Breakfast is included with the room rate, please note that certain properties may charge extra for children travelling with their parents. If applicable, the property will bill you directly. Upon arrival, if you have any questions, please verify with the property.'),
+                    ],
+                  ),
+                ),
+                pw.SizedBox(height: 12),
+
+                // ── 8. Calm & Minimal Thank You Banner ──────────────────────
+                pw.Container(
+                  width: double.infinity,
+                  padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.grey200,
+                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                  ),
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text(
+                        'Thank you for choosing FastNetStays.com!',
+                        style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                      ),
+                      pw.SizedBox(height: 2),
+                      pw.Text(
+                        'We wish you a pleasant and comfortable stay.',
+                        style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey800),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
+
+    final output = await getTemporaryDirectory();
+    final file = File('${output.path}/FastNetStays-Booking-Confirmation-$bookingCode.pdf');
+    await file.writeAsBytes(await pdf.save());
+    return file;
+  }
+
+  pw.Widget _pdfDot(PdfColor color) {
+    return pw.Container(
+      width: 7.5,
+      height: 7.5,
+      margin: const pw.EdgeInsets.only(right: 4.5),
+      decoration: pw.BoxDecoration(color: color, shape: pw.BoxShape.circle),
+    );
+  }
+
+  pw.Widget _pdfDetailRow(String label, String value, {bool isBold = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 2),
+      child: pw.Row(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.SizedBox(
+            width: 110,
+            child: pw.Text(label, style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
+          ),
+          pw.Expanded(
+            child: pw.Text(
+              value,
+              style: pw.TextStyle(fontSize: 7.5, fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal, color: PdfColors.black),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _pdfFormBox(String label, String value, {bool isBold = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 2),
+      child: pw.Row(
+        children: [
+          pw.SizedBox(
+            width: 95,
+            child: pw.Text(label, style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
+          ),
+          pw.Expanded(
+            child: pw.Container(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              decoration: pw.BoxDecoration(
+                color: PdfColors.white,
+                border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+              ),
+              child: pw.Text(
+                value,
+                style: pw.TextStyle(fontSize: 7.5, fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal),
+                textAlign: pw.TextAlign.center,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  pw.Widget _pdfNoteItem(String number, String text, {bool isImportant = false}) {
+    return pw.Row(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.SizedBox(
+          width: 14,
+          child: pw.Text(number, style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.black)),
+        ),
+        pw.Expanded(
+          child: isImportant
+              ? pw.RichText(
+                  text: pw.TextSpan(
+                    style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.black, height: 1.35),
+                    children: [
+                      pw.TextSpan(text: 'IMPORTANT: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.red900)),
+                      pw.TextSpan(text: text),
+                    ],
+                  ),
+                )
+              : pw.Text(
+                  text,
+                  style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.black, height: 1.35),
+                ),
+        ),
+      ],
+    );
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // SCREEN UI BUILD
+  // ───────────────────────────────────────────────────────────────────────────
+
+  Future<void> _shareReceipt(BuildContext context, int grandTotal, int roomTotal, int extraTotal, int serviceFee, String transactionId, String paymentTime) async {
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
+      );
+
+      final file = await _generatePdf(grandTotal, roomTotal, extraTotal, serviceFee, transactionId, paymentTime);
+
+      if (context.mounted) Navigator.pop(context);
+
+      await Share.shareXFiles([XFile(file.path)], text: 'FastNetStays Booking Confirmation - $lodgeName');
+    } catch (e) {
+      if (context.mounted) Navigator.pop(context);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to share PDF: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   @override
@@ -59,222 +649,488 @@ class ReceiptScreen extends StatelessWidget {
     for (var svc in extraServices) {
       extraTotal += (svc['price'] as int) * (svc['quantity'] as int);
     }
+    final vatTotal = (roomTotal * 0.125).round();
+    final grandTotal = roomTotal + vatTotal + extraTotal;
     const serviceFee = 5000;
-    final grandTotal = roomTotal + serviceFee + extraTotal;
 
-    // Simulated transaction details
-    final transactionId = 'TZS-TXN-${bookingCode.split('-')[1]}';
-    const paymentTime = 'Jul 01, 2026 • 07:34 AM';
+    final transactionId = 'FNS-${bookingCode.replaceAll('-', '')}';
+    final actualPaymentTime = paymentTime ?? '2026-08-01 09:00 AM';
+
+    final arrivalDate = dates.split(' - ').first;
+    final departureDate = dates.contains('-') ? dates.split('-').last.trim() : 'Next Day';
+    final refNo = '337038${bookingCode.replaceAll('-', '').substring(0, 4)}';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0.5,
-        title: const Text('Invoice Receipt', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+        title: const Text('Booking Confirmation', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16)),
         iconTheme: const IconThemeData(color: Colors.black87),
         actions: [
           IconButton(
             icon: const Icon(Icons.share_outlined),
-            onPressed: () => _simulateShare(context),
+            tooltip: 'Share Voucher',
+            onPressed: () => _shareReceipt(context, grandTotal, roomTotal, extraTotal, serviceFee, transactionId, actualPaymentTime),
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
+        padding: const EdgeInsets.all(12.0),
         child: Column(
           children: [
-            // Receipt Card container
+            // Outer Border Container Box (Exact match to reference image)
             Container(
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.black87, width: 1.2),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.04),
+                    color: Colors.black.withValues(alpha: 0.05),
                     blurRadius: 10,
-                    offset: const Offset(0, 5),
-                  )
+                    offset: const Offset(0, 4),
+                  ),
                 ],
               ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Receipt Header (Merchant Info)
-                  Padding(
-                    padding: const EdgeInsets.all(24.0),
-                    child: Column(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade50,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(Icons.check, color: Colors.red.shade900, size: 28),
-                        ),
-                        const SizedBox(height: 16),
-                        const Text(
-                          'PAYMENT SUCCESSFUL',
-                          style: TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                            letterSpacing: 1.0,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _formatPrice(grandTotal),
-                          style: TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.red.shade900,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Transaction ID: $transactionId',
-                          style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // Dotted line with ticket notches
+                  // 1. Top Header Row
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Container(
-                        width: 12,
-                        height: 24,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFF3F4F6),
-                          borderRadius: BorderRadius.only(
-                            topRight: Radius.circular(12),
-                            bottomRight: Radius.circular(12),
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            return Flex(
-                              direction: Axis.horizontal,
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: List.generate(
-                                (constraints.constrainWidth() / 10).floor(),
-                                (index) => SizedBox(
-                                  width: 5,
-                                  height: 1,
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(color: Colors.grey.shade300),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          RichText(
+                            text: const TextSpan(
+                              children: [
+                                TextSpan(
+                                  text: 'FASTNET',
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFF003087),
+                                    letterSpacing: 0.8,
+                                    decoration: TextDecoration.underline,
+                                    decorationColor: Color(0xFF003087),
+                                    decorationThickness: 2,
                                   ),
                                 ),
+                                TextSpan(
+                                  text: 'STAYS',
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFFD9251D),
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: '.com',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Row(
+                            children: [
+                              _uiDot(Colors.red),
+                              _uiDot(Colors.orange),
+                              _uiDot(Colors.amber),
+                              _uiDot(Colors.green),
+                              _uiDot(Colors.blue),
+                            ],
+                          ),
+                        ],
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            RichText(
+                              text: const TextSpan(
+                                children: [
+                                  TextSpan(text: 'Booking ', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black)),
+                                  TextSpan(text: 'Confirmation', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFFD9251D))),
+                                ],
                               ),
-                            );
-                          },
+                            ),
+                            const SizedBox(height: 2),
+                            const Text(
+                              'Please present either an electronic or paper copy of your booking confirmation upon check-in.',
+                              textAlign: TextAlign.end,
+                              style: TextStyle(fontSize: 8, color: Colors.black87),
+                            ),
+                          ],
                         ),
                       ),
-                      Container(
-                        width: 12,
-                        height: 24,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFF3F4F6),
-                          borderRadius: BorderRadius.only(
-                            topLeft: Radius.circular(12),
-                            bottomLeft: Radius.circular(12),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+
+                  // Full-width Grey Watermark Band
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 6),
+                    color: Colors.grey.shade400,
+                    child: const Text(
+                      'fastnetstays.com    fastnetstays.com    fastnetstays.com    fastnetstays.com    fastnetstays.com',
+                      style: TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // 2. Main 2-Column Grid
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Left Column
+                      Expanded(
+                        flex: 13,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _uiDetailRow('Booking ID :', bookingCode, isBold: true),
+                            _uiDetailRow('Booking Reference No :', refNo, isBold: true),
+                            _uiDetailRow('Client :', guestName.toUpperCase(), isBold: true),
+                            _uiDetailRow('Member ID :', '53370111', isBold: true),
+                            _uiDetailRow('Country of Residence :', 'Tanzania', isBold: true),
+                            _uiDetailRow('Property Contact :', guestPhone.isNotEmpty ? guestPhone : '+255 700 000 000', isBold: true),
+                            const SizedBox(height: 4),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(
+                                  width: 120,
+                                  child: Text('Property :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                ),
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                                      color: Colors.white,
+                                    ),
+                                    child: Text(lodgeName, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(
+                                  width: 120,
+                                  child: Text('Room Assigned :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                ),
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                                      color: Colors.white,
+                                    ),
+                                    child: Text('Room $roomNumber', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(
+                                  width: 120,
+                                  child: Text('Address :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                ),
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                                      color: Colors.white,
+                                    ),
+                                    child: Text('$location, Tanzania', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+
+                      // Right Column Form Box Panel (Grey background container)
+                      Expanded(
+                        flex: 11,
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          color: const Color(0xFFEFEFEF),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _uiFormBox('Number of Rooms :', '1'),
+                              _uiFormBox('Number of Extra Beds :', '0'),
+                              _uiFormBox('Number of Adults :', '2'),
+                              _uiFormBox('Number of Children :', '0'),
+                              _uiFormBox('Room Type :', 'Standard King Room', isBold: true),
+                              _uiFormBox('Room Number :', 'Room $roomNumber', isBold: true),
+                              _uiFormBox('Promotion :', ''),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'For Full Promotion details and conditions see confirmation email',
+                                style: TextStyle(fontSize: 7.5, color: Colors.black87),
+                              ),
+                            ],
                           ),
                         ),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 10),
 
-                  // Receipt Body (Itemized summary)
-                  Padding(
-                    padding: const EdgeInsets.all(24.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildSectionHeader('RESERVATION DETAILS'),
-                        const SizedBox(height: 12),
-                        _buildRow('Merchant', 'LODGE RESERVATIONS Ltd.'),
-                        _buildRow('Lodge Name', lodgeName),
-                        _buildRow('Room Number', 'Room $roomNumber'),
-                        _buildRow('Location', location),
-                        _buildRow('Dates', dates),
-                        _buildRow('Guest Profile', guestName),
-                        _buildRow('Payment Time', paymentTime),
-                        _buildRow('Payment Wallet', paymentMethod),
-
-                        const SizedBox(height: 24),
-                        _buildSectionHeader('CHARGE BREAKDOWN'),
-                        const SizedBox(height: 12),
-                        _buildRow('Room Base Charge (${_formatPrice(pricePerNight)} x $numNights nights)', _formatPrice(roomTotal)),
-                        _buildRow('Lodge Service Fee', _formatPrice(serviceFee)),
-                        
-                        // Extra services (food order checkout)
-                        for (var svc in extraServices)
-                          _buildRow(
-                            '${svc['description']} (x${svc['quantity']})',
-                            _formatPrice((svc['price'] as int) * (svc['quantity'] as int)),
+                  // 3. Cancellation Policy Box
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(6),
+                    color: const Color(0xFFEFEFEF),
+                    child: RichText(
+                      text: const TextSpan(
+                        style: TextStyle(fontSize: 8.5, color: Colors.black87, height: 1.3),
+                        children: [
+                          TextSpan(text: 'Cancellation Policy: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                          TextSpan(
+                            text: 'Any cancellation received will incur a charge of 34% of the booking value. Failure to arrive at your hotel or property will be treated as a No-Show and will incur a charge of 100% of the booking value (Hotel policy).',
                           ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 5),
 
-                        const Divider(height: 32),
+                  // 4. Benefits Included Box
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(6),
+                    color: const Color(0xFFEFEFEF),
+                    child: const Text(
+                      'Benefits Included: -',
+                      style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.black87),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // 5. Arrival / Departure & Payment Details Box
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                    ),
+                    child: Column(
+                      children: [
+                        // Arrival / Departure Row
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text(
-                              'TOTAL CHARGE',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87),
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  const Text('Arrival :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                                      color: const Color(0xFFD9D9D9),
+                                      child: Text(arrivalDate, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                            Text(
-                              _formatPrice(grandTotal),
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.red.shade900),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  const Text('Departure :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                                      color: const Color(0xFFD9D9D9),
+                                      child: Text(departureDate, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ),
+                        const SizedBox(height: 8),
 
-                        const SizedBox(height: 32),
-                        // QR Code placeholder using visual containers
-                        Center(
-                          child: Column(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(10),
+                        // Payment Details Note & Stamp / QR Box
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              flex: 14,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('Payment Details :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                  const SizedBox(height: 4),
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(6),
+                                    color: const Color(0xFFEFEFEF),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        RichText(
+                                          text: const TextSpan(
+                                            style: TextStyle(fontSize: 8, height: 1.3),
+                                            children: [
+                                              TextSpan(text: 'Please note: ', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFD9251D))),
+                                              TextSpan(text: 'Payment for this booking has been processed via FastNetStays. Payment confirmation is verified by property.', style: TextStyle(color: Colors.black87)),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        RichText(
+                                          text: TextSpan(
+                                            style: const TextStyle(fontSize: 8, height: 1.3),
+                                            children: [
+                                              const TextSpan(text: 'Note to property: ', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFD9251D))),
+                                              TextSpan(text: 'Reservation was made under FastNetStays booking ID $bookingCode', style: const TextStyle(color: Colors.black87)),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+
+                            // Stamp & QR Box
+                            Expanded(
+                              flex: 9,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
                                 decoration: BoxDecoration(
+                                  border: Border.all(color: Colors.grey.shade400, width: 0.5),
                                   color: Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: Colors.grey.shade300, width: 2),
                                 ),
                                 child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: List.generate(12, (y) {
-                                    return Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: List.generate(12, (x) {
-                                        // Generate simulated QR code blocks
-                                        final isFilled = (x + y) % 3 == 0 || (x * y) % 5 == 1 || (x < 3 && y < 3) || (x > 8 && y < 3) || (x < 3 && y > 8);
-                                        return Container(
-                                          width: 8,
-                                          height: 8,
-                                          color: isFilled ? Colors.black : Colors.white,
-                                        );
-                                      }),
-                                    );
-                                  }),
+                                  children: [
+                                    QrImageView(
+                                      data: 'FASTNETSTAYS-BOOKING:$bookingCode|LODGE:$lodgeName|ROOM:$roomNumber|GUEST:$guestName',
+                                      version: QrVersions.auto,
+                                      size: 58.0,
+                                      gapless: false,
+                                      eyeStyle: const QrEyeStyle(
+                                        eyeShape: QrEyeShape.square,
+                                        color: Colors.black87,
+                                      ),
+                                      dataModuleStyle: const QrDataModuleStyle(
+                                        dataModuleShape: QrDataModuleShape.square,
+                                        color: Colors.black87,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    const Text(
+                                      'Authorized Stamp & Signature',
+                                      style: TextStyle(fontSize: 7.5, fontWeight: FontWeight.bold, color: Colors.black87),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
                                 ),
                               ),
-                              const SizedBox(height: 10),
-                              Text(
-                                'SCAN AT RECEPTION FOR FAST CHECK-IN',
-                                style: TextStyle(
-                                  color: Colors.grey.shade500,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 0.8,
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // 6. Remarks
+                  const Text('Remarks :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                  Text('Included : Taxes and fees ${_formatPrice(vatTotal)}', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold)),
+                  const Text('NonSmoke', style: TextStyle(fontSize: 8.5)),
+                  const Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'All special requests are subject to availability upon arrival',
+                          style: TextStyle(fontSize: 8),
+                        ),
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'For any issues or questions, please visit www.fastnetstays.com/support.',
+                          textAlign: TextAlign.end,
+                          style: TextStyle(fontSize: 8, color: Colors.black87),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+
+                  // 7. Notes Box
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                      color: const Color(0xFFFDFDFD),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Notes', style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.black87)),
+                        const SizedBox(height: 6),
+                        _uiNoteItem('1.', 'At check-in, you must present a valid photo ID with your address confirming the same name as the lead guest on the booking. For bookings paid with a credit card, you may also need to present the card used to make the payment. Failure to do so may result in the hotel requesting additional payment or your reservation not being honored.', isImportant: true),
+                        const SizedBox(height: 5),
+                        _uiNoteItem('2.', 'All rooms are guaranteed on the day of arrival. In the case of a no-show, your room(s) will be released and you will be subject to the terms and conditions of the Cancellation/No-Show Policy specified at the time you made the booking as well as noted in the Confirmation Email.'),
+                        const SizedBox(height: 5),
+                        _uiNoteItem('3.', 'The total price for this booking does not include mini-bar items, telephone usage, laundry service, etc. The property will bill you directly.'),
+                        const SizedBox(height: 5),
+                        _uiNoteItem('4.', 'In cases where Breakfast is included with the room rate, please note that certain properties may charge extra for children travelling with their parents. If applicable, the property will bill you directly. Upon arrival, if you have any questions, please verify with the property.'),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // 8. Calm & Minimal Thank You Banner Box
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFEFEF),
+                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Thank you for choosing FastNetStays.com!',
+                          style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.black87),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'We wish you a pleasant and comfortable stay.',
+                          style: TextStyle(fontSize: 7.5, color: Colors.grey.shade800),
                         ),
                       ],
                     ),
@@ -282,162 +1138,96 @@ class ReceiptScreen extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 24),
-            
-            // Actions
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _simulateDownload(context),
-                    icon: const Icon(Icons.download_outlined, color: Colors.black87),
-                    label: const Text('Download Receipt', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: BorderSide(color: Colors.grey.shade300),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 40),
+            const SizedBox(height: 20),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSectionHeader(String title) {
-    return Text(
-      title,
-      style: TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.bold,
-        color: Colors.grey.shade500,
-        letterSpacing: 0.8,
-      ),
+  Widget _uiDot(Color color) {
+    return Container(
+      width: 7.5,
+      height: 7.5,
+      margin: const EdgeInsets.only(right: 4.5),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
 
-  Widget _buildRow(String label, String value) {
+  Widget _uiDetailRow(String label, String value, {bool isBold = false}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            flex: 2,
-            child: Text(
-              label,
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
-            ),
+          SizedBox(
+            width: 120,
+            child: Text(label, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black87)),
           ),
           Expanded(
-            flex: 3,
             child: Text(
               value,
-              textAlign: TextAlign.end,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black87),
+              style: TextStyle(fontSize: 9, fontWeight: isBold ? FontWeight.bold : FontWeight.normal, color: Colors.black87),
             ),
           ),
         ],
       ),
     );
   }
-}
 
-class DownloadSimulationDialog extends StatefulWidget {
-  const DownloadSimulationDialog({Key? key}) : super(key: key);
-
-  @override
-  State<DownloadSimulationDialog> createState() => _DownloadSimulationDialogState();
-}
-
-class _DownloadSimulationDialogState extends State<DownloadSimulationDialog> {
-  double _progress = 0.0;
-  String _status = 'Compiling receipt details...';
-
-  @override
-  void initState() {
-    super.initState();
-    _startSimulation();
-  }
-
-  void _startSimulation() {
-    // Simulate compilation steps
-    Future.delayed(const Duration(milliseconds: 600), () {
-      if (mounted) {
-        setState(() {
-          _progress = 0.35;
-          _status = 'Generating PDF vector graphics...';
-        });
-      }
-    });
-    Future.delayed(const Duration(milliseconds: 1400), () {
-      if (mounted) {
-        setState(() {
-          _progress = 0.70;
-          _status = 'Signing invoice with CRDB payment hash...';
-        });
-      }
-    });
-    Future.delayed(const Duration(milliseconds: 2200), () {
-      if (mounted) {
-        setState(() {
-          _progress = 1.0;
-          _status = 'Saved PDF to Downloads successfully!';
-        });
-      }
-    });
-    Future.delayed(const Duration(milliseconds: 3000), () {
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Receipt PDF saved to downloads folder.'),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
+  Widget _uiFormBox(String label, String value, {bool isBold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 95,
+            child: Text(label, style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.black87)),
           ),
-        );
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      content: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 56,
-              height: 56,
-              child: CircularProgressIndicator(
-                value: _progress,
-                color: Colors.red.shade900,
-                backgroundColor: Colors.grey.shade200,
-                strokeWidth: 5,
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: Colors.grey.shade400, width: 0.5),
+              ),
+              child: Text(
+                value,
+                style: TextStyle(fontSize: 8.5, fontWeight: isBold ? FontWeight.bold : FontWeight.normal),
+                textAlign: TextAlign.center,
               ),
             ),
-            const SizedBox(height: 24),
-            const Text(
-              'Generating PDF Invoice',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _status,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _uiNoteItem(String number, String text, {bool isImportant = false}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 16,
+          child: Text(number, style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.bold, color: Colors.black87)),
+        ),
+        Expanded(
+          child: isImportant
+              ? RichText(
+                  text: TextSpan(
+                    style: const TextStyle(fontSize: 7.5, color: Colors.black87, height: 1.35),
+                    children: [
+                      const TextSpan(text: 'IMPORTANT: ', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFD9251D))),
+                      TextSpan(text: text),
+                    ],
+                  ),
+                )
+              : Text(
+                  text,
+                  style: const TextStyle(fontSize: 7.5, color: Colors.black87, height: 1.35),
+                ),
+        ),
+      ],
     );
   }
 }
