@@ -108,75 +108,9 @@ class _ExploreState extends State<Explore> {
     return destinations.where((d) => d.matches(_searchQuery)).toList();
   }
 
-  final Map<String, Map<String, double>> _locationCoordinates = const {
-    'dar es salaam': {'lat': -6.7780, 'lng': 39.2345},
-    'dodoma': {'lat': -6.1664, 'lng': 35.7443},
-    'arusha': {'lat': -3.3662, 'lng': 36.6661},
-    'zanzibar': {'lat': -5.7335, 'lng': 39.2974},
-    'mwanza': {'lat': -2.5164, 'lng': 32.9033},
-    'new york': {'lat': -6.7780, 'lng': 39.2345},
-  };
 
-  double _calculateDistanceKm(double lat1, double lon1, double lat2, double lon2) {
-    const p = 0.017453292519943295;
-    final a = 0.5 - math.cos((lat2 - lat1) * p) / 2 +
-        math.cos(lat1 * p) * math.cos(lat2 * p) * (1 - math.cos((lon2 - lon1) * p)) / 2;
-    return 12742 * math.asin(math.sqrt(a));
-  }
 
-  List<Destination> get _staysNearYou {
-    final rawLoc = _currentLocation.trim().isEmpty ? 'Dar es Salaam' : _currentLocation.trim();
-    final currentLocLower = rawLoc.toLowerCase();
 
-    double centerLat = -6.7780;
-    double centerLng = 39.2345;
-    for (var entry in _locationCoordinates.entries) {
-      if (currentLocLower.contains(entry.key)) {
-        centerLat = entry.value['lat']!;
-        centerLng = entry.value['lng']!;
-        break;
-      }
-    }
-
-    // Smart geographic & area filter: strict matching for city/area
-    List<Destination> matched = destinations.where((d) {
-      final cityLower = d.city.toLowerCase();
-      final areaLower = d.area.toLowerCase();
-
-      if (currentLocLower.contains('dar') || currentLocLower.contains('new york')) {
-        return cityLower.contains('dar') ||
-            areaLower.contains('mikocheni') ||
-            areaLower.contains('masaki') ||
-            areaLower.contains('kariakoo') ||
-            areaLower.contains('mbezi') ||
-            areaLower.contains('upanga') ||
-            areaLower.contains('msasani');
-      }
-      if (currentLocLower.contains('dodoma')) {
-        return cityLower.contains('dodoma');
-      }
-      if (currentLocLower.contains('arusha')) {
-        return cityLower.contains('arusha');
-      }
-      if (currentLocLower.contains('zanzibar')) {
-        return cityLower.contains('zanzibar');
-      }
-      return d.matches(rawLoc);
-    }).toList();
-
-    if (matched.isEmpty) {
-      matched = List.from(destinations);
-    }
-
-    // Sort by calculated proximity (Haversine distance in km) to current center
-    matched.sort((a, b) {
-      final distA = _calculateDistanceKm(centerLat, centerLng, a.latitude, a.longitude);
-      final distB = _calculateDistanceKm(centerLat, centerLng, b.latitude, b.longitude);
-      return distA.compareTo(distB);
-    });
-
-    return matched;
-  }
 
   Future<void> _fetchMapboxCurrentLocation() async {
     try {
@@ -1020,56 +954,11 @@ class _ExploreState extends State<Explore> {
                       },
                     ),
                   ),
-                  const SizedBox(height: 28),
-
-                  // -------------------------------------------------------------
-                  // 4. Hotel Near You Section
-                  // -------------------------------------------------------------
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 22.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Stays Near You',
-                          style: TextStyle(
-                            fontSize: 19,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0F172A),
-                            letterSpacing: -0.3,
-                          ),
-                        ),
-                        GestureDetector(
-                          onTap: _triggerSearch,
-                          child: const Text(
-                            'See All',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFFE55325),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    height: 260,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: _staysNearYou.length,
-                      itemBuilder: (context, index) {
-                        final item = _staysNearYou[index];
-                        return _buildRecommendedStayCard(context, item);
-                      },
-                    ),
-                  ),
+                  const SizedBox(height: 32),
                 ],
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 16),
           ],
         ),
       ),
