@@ -12,8 +12,11 @@ import 'package:fastnet_mobile_front_end/ui/screens/profile/settings_screen.dart
 import 'package:fastnet_mobile_front_end/ui/screens/profile/guest_messages.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/profile/bookings_screen.dart';
 import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/models/app_settings.dart';
 import 'package:fastnet_mobile_front_end/providers/bookings_provider.dart';
 import 'package:fastnet_mobile_front_end/services/draft_booking_service.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/web_header.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
 import 'package:fastnet_mobile_front_end/providers/user_session_provider.dart';
@@ -272,6 +275,8 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDesktopWeb = kIsWeb && !AppSettings.instance.isMobileShellMode;
+
     final List<Widget> screens = [
       const Explore(),
       WishlistScreen(key: ValueKey('wish:${WishlistData.list.map((d) => d.name).join(',')}|view:${RecentlyViewedData.list.map((d) => d.name).join(',')}')),
@@ -280,18 +285,21 @@ class _MainScreenState extends State<MainScreen> {
     ];
 
     return Scaffold(
+      appBar: null,
       body: IndexedStack(
         index: _selectedIndex,
         children: screens,
       ),
-      bottomNavigationBar: BubbleBottomNavBar(
-        selectedIndex: _selectedIndex,
-        onTabSelected: (index) async {
-          setState(() => _selectedIndex = index);
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setInt('last_main_tab_index', index);
-        },
-      ),
+      bottomNavigationBar: isDesktopWeb
+          ? null
+          : BubbleBottomNavBar(
+              selectedIndex: _selectedIndex,
+              onTabSelected: (index) async {
+                setState(() => _selectedIndex = index);
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setInt('last_main_tab_index', index);
+              },
+            ),
     );
   }
 }

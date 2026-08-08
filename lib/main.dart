@@ -1,3 +1,4 @@
+import 'package:fastnet_mobile_front_end/ui/views/full_website_view.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/onboarding_screen.dart';
 import 'package:fastnet_mobile_front_end/models/app_settings.dart';
@@ -12,12 +13,17 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:fastnet_mobile_front_end/config/constants.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:fastnet_mobile_front_end/services/supabase_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await UserSession.init();
   await ApiService.init();
-  MapboxOptions.setAccessToken(AppConstants.mapboxApiKey);
+  await SupabaseService.init();
+  if (!kIsWeb) {
+    MapboxOptions.setAccessToken(AppConstants.mapboxApiKey);
+  }
   loadDestinationsFromApi(); // Load in background to prevent slow startup
   runApp(
     MultiProvider(
@@ -44,11 +50,16 @@ class MyApp extends StatelessWidget {
           scaffoldMessengerKey: NotificationService.messengerKey,
           debugShowCheckedModeBanner: false,
           title: 'FASTNET',
-          theme: ThemeData(fontFamily: 'AirbnbCereal'),
-          home: hasSeenOnboarding ? const MainScreen() : const OnboardingScreen(),
+          theme: ThemeData(
+            fontFamily: 'AirbnbCereal',
+            colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1E88E5)),
+          ),
+          builder: (context, widget) => widget!,
+          home: kIsWeb
+              ? const FullWebsiteView()
+              : (hasSeenOnboarding ? const MainScreen() : const OnboardingScreen()),
         );
       },
     );
   }
 }
-

@@ -3,13 +3,13 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/models/app_settings.dart';
+import 'package:fastnet_mobile_front_end/ui/views/full_website_view.dart';
 
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:fastnet_mobile_front_end/config/constants.dart';
-import 'package:provider/provider.dart';
-import 'package:fastnet_mobile_front_end/providers/user_session_provider.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/profile/settings_screen.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/explore/widgets/search_results.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/book_room.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
@@ -600,187 +600,174 @@ class _ExploreState extends State<Explore> {
 
   @override
   Widget build(BuildContext context) {
-    final sessionProvider = context.watch<UserSessionProvider>();
-    final profileImage = sessionProvider.profileImage;
+    final isDesktopWeb = kIsWeb && !AppSettings.instance.isMobileShellMode;
+
+    if (isDesktopWeb) {
+      return Scaffold(
+        backgroundColor: Colors.white,
+        body: FullWebsiteView(
+          destinations: _filteredDestinations,
+          currentLocation: _currentLocation,
+          onDestinationTap: (destination) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => BookRoom(destination: destination),
+              ),
+            );
+          },
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // -------------------------------------------------------------
-            // 1. Royal Blue Header Banner with Custom World Map Pattern
-            // -------------------------------------------------------------
-            Stack(
-              children: [
-                Container(
-                  height: 330,
-                  width: double.infinity,
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Color(0xFF1B65F2),
-                        Color(0xFF144EC9),
-                        Color(0xFF0F3EAF),
-                      ],
-                    ),
-                    borderRadius: BorderRadius.vertical(
-                      bottom: Radius.circular(32),
-                    ),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: const BorderRadius.vertical(
-                      bottom: Radius.circular(32),
-                    ),
-                    child: CustomPaint(
-                      painter: WorldMapPainter(),
-                    ),
-                  ),
-                ),
-                SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 14.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.center,
+      body: Column(
+        children: [
+          // -------------------------------------------------------------
+          // Fixed Top Location Header Bar (Non-scrollable)
+          // -------------------------------------------------------------
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFF1B65F2),
+                  Color(0xFF144EC9),
+                ],
+              ),
+            ),
+            child: SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Left: FastNetStays.com Logo
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Left: Profile Avatar + Location Info
+                        RichText(
+                          text: const TextSpan(
+                            style: TextStyle(
+                              fontFamily: 'AirbnbCereal',
+                              fontWeight: FontWeight.w900,
+                            ),
+                            children: [
+                              TextSpan(
+                                text: 'FASTNET',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22,
+                                  letterSpacing: 0.8,
+                                  decoration: TextDecoration.underline,
+                                  decorationColor: Colors.white,
+                                  decorationThickness: 2,
+                                ),
+                              ),
+                              TextSpan(
+                                text: 'STAYS',
+                                style: TextStyle(
+                                  color: Color(0xFFFF6B6B),
+                                  fontSize: 22,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              TextSpan(
+                                text: '.com',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 3),
                         Row(
                           children: [
-                            GestureDetector(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  FadeSlidePageRoute(page: const SettingsScreen()),
-                                );
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.all(2.5),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.15),
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
-                                ),
-                                child: CircleAvatar(
-                                  radius: 26,
-                                  backgroundImage: profileImage,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            GestureDetector(
-                              onTap: _showDestinationPicker,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    'My Current Location',
-                                    style: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.85),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w400,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(4),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withValues(alpha: 0.2),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(
-                                          Icons.location_on,
-                                          color: Colors.white,
-                                          size: 14,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        _currentLocation.isEmpty ? 'Mikocheni, Dar es Salaam' : _currentLocation,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      const Icon(
-                                        Icons.keyboard_arrow_down_rounded,
-                                        color: Colors.white,
-                                        size: 20,
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
+                            _logoDot(Colors.redAccent),
+                            _logoDot(Colors.orangeAccent),
+                            _logoDot(Colors.amber),
+                            _logoDot(Colors.lightGreenAccent),
+                            _logoDot(Colors.lightBlueAccent),
+                          ],
+                        ),
+                      ],
+                    ),
+
+                    // Right: Notification Bell Button
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          FadeSlidePageRoute(page: const NotificationsScreen()),
+                        );
+                      },
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Icon(
+                              Icons.notifications_none_rounded,
+                              color: Colors.white,
+                              size: 22,
                             ),
                           ],
                         ),
-                        // Right: Notification Bell Button with Red Dot Badge
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              FadeSlidePageRoute(page: const NotificationsScreen()),
-                            );
-                          },
-                          child: Container(
-                            width: 50,
-                            height: 50,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.1),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                const Icon(
-                                  Icons.notifications_none_rounded,
-                                  color: Color(0xFF1E293B),
-                                  size: 25,
-                                ),
-                                Positioned(
-                                  top: 12,
-                                  right: 13,
-                                  child: Container(
-                                    width: 8,
-                                    height: 8,
-                                    decoration: const BoxDecoration(
-                                      color: Color(0xFFEF4444),
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // -------------------------------------------------------------
+          // Scrollable Body Content Below Fixed Header
+          // -------------------------------------------------------------
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Royal Blue Header Banner with Custom World Map Pattern
+                  Container(
+                    height: 220,
+                    width: double.infinity,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0xFF144EC9),
+                          Color(0xFF0F3EAF),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.vertical(
+                        bottom: Radius.circular(32),
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        bottom: Radius.circular(32),
+                      ),
+                      child: CustomPaint(
+                        painter: WorldMapPainter(),
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
 
             // -------------------------------------------------------------
             // 2. Floating Search Card ("Where do you want to stay?")
@@ -943,7 +930,7 @@ class _ExploreState extends State<Explore> {
                   ),
                   const SizedBox(height: 14),
                   SizedBox(
-                    height: 260,
+                    height: 272,
                     child: ListView.builder(
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -954,15 +941,37 @@ class _ExploreState extends State<Explore> {
                       },
                     ),
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 26),
+                  _buildHomeFeedSections(context),
+                  const SizedBox(height: 28),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
           ],
         ),
       ),
+    ),
+  ],
+),
     );
+  }
+
+  void _openDestination(Destination item) {
+    Navigator.push(
+      context,
+      FadeSlidePageRoute(
+        page: BookRoom(
+          destination: item,
+        ),
+      ),
+    );
+  }
+
+  String _formatPrice(int price) {
+    return price.toString().replaceAllMapped(
+          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+          (Match match) => '${match[1]},',
+        );
   }
 
   // -------------------------------------------------------------------------
@@ -1014,16 +1023,7 @@ class _ExploreState extends State<Explore> {
   // -------------------------------------------------------------------------
   Widget _buildRecommendedStayCard(BuildContext context, Destination item) {
     return InteractiveCard(
-      onTap: () {
-        Navigator.push(
-          context,
-          FadeSlidePageRoute(
-            page: BookRoom(
-              destination: item,
-            ),
-          ),
-        );
-      },
+      onTap: () => _openDestination(item),
       child: Container(
         width: 230,
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1091,6 +1091,7 @@ class _ExploreState extends State<Explore> {
               padding: const EdgeInsets.all(12.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     item.name,
@@ -1127,6 +1128,15 @@ class _ExploreState extends State<Explore> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _buildRoomSizeLabel(item),
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -1150,6 +1160,526 @@ class _ExploreState extends State<Explore> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildHomeFeedSections(BuildContext context) {
+    final popularRooms = _buildPopularRoomCards();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Rooms',
+                style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF0F172A),
+                  letterSpacing: -0.3,
+                ),
+              ),
+              GestureDetector(
+                onTap: _triggerSearch,
+                child: const Text(
+                  'See all',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFFE55325),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final cardWidth = (constraints.maxWidth - 12) / 2;
+              return Wrap(
+                spacing: 12,
+                runSpacing: 16,
+                children: List.generate(popularRooms.length, (index) {
+                  final room = popularRooms[index];
+                  return SizedBox(
+                    width: cardWidth,
+                    child: _buildPopularRoomCard(
+                      context,
+                      room,
+                      isTall: index.isEven,
+                    ),
+                  );
+                }),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickActionCard(IconData icon, String title, String subtitle) {
+    return Expanded(
+      child: InkWell(
+        onTap: _triggerSearch,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          height: 98,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.035),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: const Color(0xFFE55325), size: 24),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDealCard(Destination item) {
+    return InteractiveCard(
+      onTap: () => _openDestination(item),
+      child: Container(
+        width: 246,
+        margin: const EdgeInsets.only(right: 12),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF7F3),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFFFD8C8)),
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.asset(item.imageUrl, width: 88, height: 112, fit: BoxFit.cover),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE55325),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text(
+                      'Last minute',
+                      style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    item.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      height: 1.15,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${item.area}, ${item.city}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.grey.shade700, fontSize: 11),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'TSh ${_formatPrice(item.price)}',
+                    style: const TextStyle(color: Color(0xFFE55325), fontSize: 13, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _buildRoomSizeLabel(Destination item) {
+    final bedrooms = item.bedrooms > 0 ? item.bedrooms : 1;
+    final estimatedSquareMeters = 15 + ((bedrooms - 1) * 5) + (item.beds > 1 ? 2 : 0);
+    final estimatedSquareFeet = (estimatedSquareMeters * 10.764).round();
+    return '$estimatedSquareMeters m²/$estimatedSquareFeet ft²';
+  }
+
+  List<PopularRoomCardData> _buildPopularRoomCards() {
+    final List<PopularRoomCardData> cards = [];
+
+    for (final lodge in destinations) {
+      final rooms = lodge.rooms;
+      if (rooms != null && rooms.isNotEmpty) {
+        for (final room in rooms) {
+          cards.add(
+            PopularRoomCardData(
+              lodge: lodge,
+              roomLabel: lodge.roomType.isNotEmpty ? lodge.roomType : 'Popular room',
+              subtitle: '${lodge.area}, ${lodge.city}',
+              imageUrl: lodge.imageUrl,
+              price: lodge.price + (cards.length % 4) * 2500,
+              rating: lodge.rating,
+              badge: room['status']?.toString() == 'booked' ? 'Booked' : 'Available',
+              views: 20 + cards.length * 3,
+            ),
+          );
+        }
+      } else {
+        cards.add(
+          PopularRoomCardData(
+            lodge: lodge,
+            roomLabel: lodge.roomType.isNotEmpty ? lodge.roomType : 'Popular room',
+            subtitle: '${lodge.area}, ${lodge.city}',
+            imageUrl: lodge.imageUrl,
+            price: lodge.price + (cards.length % 4) * 2500,
+            rating: lodge.rating,
+            badge: lodge.duration.toLowerCase().contains('few') ? 'Few left' : 'Popular',
+            views: 20 + cards.length * 3,
+          ),
+        );
+      }
+    }
+
+    return cards.take(4).toList();
+  }
+
+  Widget _buildPopularRoomCard(
+    BuildContext context,
+    PopularRoomCardData room, {
+    required bool isTall,
+  }) {
+    final cardImageHeight = isTall ? 146.0 : 132.0;
+    final priceText = 'TSh ${room.price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}';
+
+    return InteractiveCard(
+      onTap: () => _openDestination(room.lodge),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(22),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 14,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Stack(
+                children: [
+                  Image.asset(
+                    room.imageUrl,
+                    height: cardImageHeight,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) {
+                      return Container(
+                        height: cardImageHeight,
+                        color: const Color(0xFFF1F5F9),
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.bed_outlined, color: Colors.grey, size: 42),
+                      );
+                    },
+                  ),
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: room.badge == 'Booked' ? const Color(0xFFD97706) : const Color(0xFFDB2777),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      room.badge,
+                      style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+                      child: Text(
+                        room.badge,
+                        style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.95),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.favorite_border, size: 18, color: Colors.black87),
+                    ),
+                  ),
+                  Positioned(
+                    left: 10,
+                    bottom: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.68),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        'Popular room',
+                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      room.lodge.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF0F172A),
+                        height: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      room.subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(Icons.star_rounded, color: Colors.amber, size: 16),
+                        const SizedBox(width: 2),
+                        Text(
+                          room.rating.toStringAsFixed(1),
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(Icons.remove_red_eye_outlined, size: 14, color: Colors.grey.shade600),
+                        const SizedBox(width: 2),
+                        Text(
+                          '${room.views}',
+                          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Colors.grey.shade800),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            priceText,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFFE55325),
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '/ night',
+                          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCareBanner() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F3EAF),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F3EAF).withValues(alpha: 0.18),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(Icons.verified_user_outlined, color: Colors.white, size: 25),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'FastNet care on every stay',
+                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Verified rooms, secure booking, and support when plans change.',
+                  style: TextStyle(color: Color(0xFFDCE8FF), fontSize: 12, height: 1.35),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNearbyStayTile(Destination item) {
+    return InteractiveCard(
+      onTap: () => _openDestination(item),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.045),
+              blurRadius: 14,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.asset(item.imageUrl, width: 76, height: 76, fit: BoxFit.cover),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Color(0xFF0F172A), fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      const Icon(Icons.location_on_outlined, size: 14, color: Color(0xFF64748B)),
+                      const SizedBox(width: 3),
+                      Expanded(
+                        child: Text(
+                          '${item.distance} km away in ${item.area}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(Icons.star_rounded, color: Colors.amber, size: 16),
+                      const SizedBox(width: 3),
+                      Text(
+                        item.rating.toString(),
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                      ),
+                      const Spacer(),
+                      Text(
+                        'TSh ${_formatPrice(item.price)}',
+                        style: const TextStyle(color: Color(0xFFE55325), fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _logoDot(Color color) {
+    return Container(
+      width: 16,
+      height: 16,
+      margin: const EdgeInsets.only(right: 5),
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
 }
@@ -1191,6 +1721,28 @@ class WorldMapPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class PopularRoomCardData {
+  final Destination lodge;
+  final String roomLabel;
+  final String subtitle;
+  final String imageUrl;
+  final int price;
+  final double rating;
+  final String badge;
+  final int views;
+
+  const PopularRoomCardData({
+    required this.lodge,
+    required this.roomLabel,
+    required this.subtitle,
+    required this.imageUrl,
+    required this.price,
+    required this.rating,
+    required this.badge,
+    required this.views,
+  });
 }
 
 // -----------------------------------------------------------------------------

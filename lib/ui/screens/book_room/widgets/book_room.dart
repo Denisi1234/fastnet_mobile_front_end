@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/services.dart' show ByteData, Uint8List;
 import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:provider/provider.dart';
+import 'package:fastnet_mobile_front_end/providers/wishlist_provider.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/reviews_screen.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/room_selection.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
@@ -12,6 +14,10 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' hide Size;
 import 'package:fastnet_mobile_front_end/config/constants.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/fullscreen_map.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:fastnet_mobile_front_end/models/app_settings.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/web_header.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
 
 class BookRoom extends StatefulWidget {
   final Destination destination;
@@ -227,6 +233,10 @@ https://fastnet.app/lodges/${Uri.encodeComponent(d.name)}
   @override
   Widget build(BuildContext context) {
     final images = _lodgeImages;
+    final isDesktopWeb = kIsWeb && !AppSettings.instance.isMobileShellMode;
+    if (isDesktopWeb) {
+      return _buildDesktopWebView(context);
+    }
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -954,6 +964,370 @@ https://fastnet.app/lodges/${Uri.encodeComponent(d.name)}
               },
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopWebView(BuildContext context) {
+    final d = widget.destination;
+    final images = _lodgeImages;
+    final formattedPrice = _formatPrice(d.price);
+    final formattedOriginal = _formatPrice((d.price * 1.1).toInt());
+    final reviewScore = (d.rating * 2).clamp(0, 10).toStringAsFixed(1);
+    final reviewLabel = d.rating >= 4.5 ? 'Superb' : d.rating >= 4.0 ? 'Very Good' : 'Good';
+    final stars = d.rating.round().clamp(1, 5);
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF2F2F2),
+      appBar: WebTopHeader(
+        selectedIndex: 0,
+        onTabSelected: (idx) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => MainScreen(initialTab: idx)),
+            (route) => false,
+          );
+        },
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            // Breadcrumbs and Action buttons bar
+            Container(
+              color: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 12),
+              child: Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.arrow_back, size: 16, color: Color(0xFF006CE4)),
+                    label: const Text('Back to search results', style: TextStyle(color: Color(0xFF006CE4), fontWeight: FontWeight.bold)),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: _shareLodge,
+                    icon: const Icon(Icons.share, size: 20, color: Color(0xFF006CE4)),
+                    tooltip: 'Share',
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: () {
+                      final wishlist = Provider.of<WishlistProvider>(context, listen: false);
+                      wishlist.toggle(d);
+                    },
+                    icon: Icon(
+                      Provider.of<WishlistProvider>(context).contains(d)
+                          ? Icons.favorite
+                          : Icons.favorite_border,
+                      size: 20,
+                      color: Colors.red,
+                    ),
+                    tooltip: 'Save to Wishlist',
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Main Web Layout Constrained Container
+            Container(
+              constraints: const BoxConstraints(maxWidth: 1150),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Title and Stars Section
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Text('Lodge', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                ),
+                                const SizedBox(width: 8),
+                                ...List.generate(stars, (_) => const Icon(Icons.star, size: 16, color: Color(0xFFF5A623))),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              d.name,
+                              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.black87, letterSpacing: -0.5),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                const Icon(Icons.location_on, size: 16, color: Color(0xFF006CE4)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${d.area}, ${d.city}, Tanzania',
+                                  style: const TextStyle(fontSize: 14, color: Colors.black87),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Reviews Badge
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF003580),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          children: [
+                            Text(
+                              reviewScore,
+                              style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              reviewLabel,
+                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Image Grid (1 Big Left + 4 Small Grid Right)
+                  if (images.isNotEmpty)
+                    SizedBox(
+                      height: 420,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Large image
+                          Expanded(
+                            flex: 3,
+                            child: ClipRRect(
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(8),
+                                bottomLeft: Radius.circular(8),
+                              ),
+                              child: Image.asset(images[0], fit: BoxFit.cover),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Small grid images
+                          Expanded(
+                            flex: 2,
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.zero,
+                                          child: Image.asset(images.length > 1 ? images[1] : images[0], fit: BoxFit.cover, height: double.infinity),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: ClipRRect(
+                                          borderRadius: const BorderRadius.only(topRight: Radius.circular(8)),
+                                          child: Image.asset(images.length > 2 ? images[2] : images[0], fit: BoxFit.cover, height: double.infinity),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.zero,
+                                          child: Image.asset(images.length > 3 ? images[3] : images[0], fit: BoxFit.cover, height: double.infinity),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: ClipRRect(
+                                          borderRadius: const BorderRadius.only(bottomRight: Radius.circular(8)),
+                                          child: Image.asset(images.length > 4 ? images[4] : images[0], fit: BoxFit.cover, height: double.infinity),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 32),
+
+                  // Content Columns Split Layout
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Left Content Panel
+                      Expanded(
+                        flex: 2,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Facilities wrap
+                            const Text('Popular facilities', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 16),
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              children: d.amenities.map((facility) {
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(color: Colors.grey.shade300),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.check_circle_outline, size: 16, color: Color(0xFF008009)),
+                                      const SizedBox(width: 8),
+                                      Text(facility, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 32),
+
+                            // Overview Section
+                            const Text('Overview', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 16),
+                            Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.grey.shade200),
+                              ),
+                              child: Text(
+                                d.condition,
+                                style: const TextStyle(fontSize: 14, height: 1.6, color: Colors.black87),
+                              ),
+                            ),
+                            const SizedBox(height: 32),
+
+                            // Map Preview Section
+                            const Text('Location Map', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 16),
+                            _buildRealMap(),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 32),
+
+                      // Right Booking Panel (Sticky sidebar simulation)
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.grey.shade200),
+                            boxShadow: [
+                              BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4)),
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Booking Summary', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  const Icon(Icons.calendar_today, size: 16, color: Colors.black54),
+                                  const SizedBox(width: 8),
+                                  Text(_datesText, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  const Icon(Icons.nightlight_round, size: 16, color: Colors.black54),
+                                  const SizedBox(width: 8),
+                                  Text('Duration of stay: $_numNights nights', style: const TextStyle(fontSize: 13)),
+                                ],
+                              ),
+                              const SizedBox(height: 20),
+                              const Divider(),
+                              const SizedBox(height: 16),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('Rate per night', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                                  Text(formattedPrice, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('Original value', style: TextStyle(color: Colors.red, fontSize: 13, decoration: TextDecoration.lineThrough)),
+                                  Text(formattedOriginal, style: const TextStyle(fontSize: 13, color: Colors.red, decoration: TextDecoration.lineThrough)),
+                                ],
+                              ),
+                              const SizedBox(height: 20),
+                              ElevatedButton(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => RoomSelectionScreen(
+                                        destination: widget.destination,
+                                        selectedDatesText: _datesText,
+                                        numNights: _numNights,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF006CE4),
+                                  foregroundColor: Colors.white,
+                                  minimumSize: const Size(double.infinity, 50),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                  elevation: 0,
+                                ),
+                                child: const Text('Reserve Your Room', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                              ),
+                              const SizedBox(height: 12),
+                              const Center(
+                                child: Text(
+                                  'Standard booking steps apply',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 64),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

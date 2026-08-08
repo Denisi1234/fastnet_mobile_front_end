@@ -10,9 +10,11 @@ class AppSettings extends ChangeNotifier {
 
   AppLanguage _language = AppLanguage.english;
   AppCurrency _currency = AppCurrency.tzs;
+  bool _isMobileShellMode = false;
 
   AppLanguage get language => _language;
   AppCurrency get currency => _currency;
+  bool get isMobileShellMode => _isMobileShellMode;
 
   void setLanguage(AppLanguage lang) {
     if (_language != lang) {
@@ -26,6 +28,11 @@ class AppSettings extends ChangeNotifier {
       _currency = cur;
       notifyListeners();
     }
+  }
+
+  void toggleMobileShellMode() {
+    _isMobileShellMode = !_isMobileShellMode;
+    notifyListeners();
   }
 
   // Conversion rates (Base is TZS)

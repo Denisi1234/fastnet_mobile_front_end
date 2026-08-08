@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class ApiService {
   static String get baseUrl {
     // Update this to your production API URL before releasing
-    const String productionUrl = 'https://api.fastnet.co.tz/api';
+    const String productionUrl = 'https://api.fastnetstays.com/api';
     const String devUrl = 'http://10.0.2.2:8000/api';
     const String devUrliOS = 'http://localhost:8000/api';
 
@@ -664,6 +664,32 @@ class ApiService {
       return response.statusCode == 200;
     } catch (e) {
       debugPrint('API Update Profile Error: $e');
+    }
+    return false;
+  }
+
+  /// Triggers real-time email dispatch with PDF receipt attachment to guest.
+  static Future<bool> sendConfirmationEmail({
+    required String email,
+    required String bookingCode,
+    required String lodgeName,
+    required int amount,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/bookings/$bookingCode/send-confirmation-email'),
+        headers: _headers,
+        body: jsonEncode({
+          'email': email,
+          'booking_code': bookingCode,
+          'lodge_name': lodgeName,
+          'amount': amount,
+          'attach_pdf': true,
+        }),
+      ).timeout(_timeout);
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('API Send Confirmation Email Error: $e');
     }
     return false;
   }

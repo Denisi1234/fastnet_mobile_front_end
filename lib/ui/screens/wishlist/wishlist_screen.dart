@@ -3,8 +3,11 @@ import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/book_room.
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 import 'package:fastnet_mobile_front_end/providers/wishlist_provider.dart';
 import 'package:provider/provider.dart';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:fastnet_mobile_front_end/models/app_settings.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/web_header.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
 
 class WishlistScreen extends StatefulWidget {
   const WishlistScreen({Key? key}) : super(key: key);
@@ -157,6 +160,10 @@ class _WishlistScreenState extends State<WishlistScreen> {
     final String suggestionSubtitle = savedCities.isNotEmpty 
         ? 'Based on stays you visited in ${savedCities.join(', ')}' 
         : 'Top-rated stays near your location';
+    final isDesktopWeb = kIsWeb && !AppSettings.instance.isMobileShellMode;
+    if (isDesktopWeb) {
+      return _buildDesktopWebView(context, groups, activeGroup, savedList, visitedList, suggestionsList, suggestionTitle, suggestionSubtitle);
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
@@ -388,6 +395,279 @@ class _WishlistScreenState extends State<WishlistScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopWebView(
+    BuildContext context,
+    List<WishlistGroup> groups,
+    WishlistGroup activeGroup,
+    List<Destination> savedList,
+    List<Destination> visitedList,
+    List<Destination> suggestionsList,
+    String suggestionTitle,
+    String suggestionSubtitle,
+  ) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF2F2F2),
+      appBar: WebTopHeader(
+        selectedIndex: 1,
+        onTabSelected: (idx) {
+          if (idx != 1) {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => MainScreen(initialTab: idx)),
+              (route) => false,
+            );
+          }
+        },
+      ),
+      body: SingleChildScrollView(
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 1100),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Title and create list button
+                Row(
+                  children: [
+                    const Text(
+                      'Wishlists',
+                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.black87),
+                    ),
+                    const Spacer(),
+                    ElevatedButton.icon(
+                      onPressed: _showCreateWishlistDialog,
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('Create list', style: TextStyle(fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF006CE4),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                        elevation: 0,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Sidebar Wishlist Folders List
+                    SizedBox(
+                      width: 260,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              child: Text('My folders', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
+                            ),
+                            ...List.generate(groups.length, (idx) {
+                              final gp = groups[idx];
+                              final isSelected = _selectedGroupIndex == idx;
+                              return ListTile(
+                                dense: true,
+                                selected: isSelected,
+                                selectedTileColor: const Color(0xFF003580).withValues(alpha: 0.05),
+                                leading: Icon(
+                                  gp.isPrivate ? Icons.lock_outline : Icons.folder_open_outlined,
+                                  color: isSelected ? const Color(0xFF003580) : Colors.black54,
+                                ),
+                                title: Text(
+                                  gp.name,
+                                  style: TextStyle(
+                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                    color: isSelected ? const Color(0xFF003580) : Colors.black87,
+                                  ),
+                                ),
+                                trailing: Text(
+                                  '${gp.items.length}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: isSelected ? const Color(0xFF003580) : Colors.grey,
+                                  ),
+                                ),
+                                onTap: () {
+                                  setState(() {
+                                    _selectedGroupIndex = idx;
+                                  });
+                                },
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 32),
+
+                    // Active Wishlist Properties Grid
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                activeGroup.name,
+                                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade200,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  activeGroup.isPrivate ? 'Only me' : 'Shared',
+                                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black54),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          if (savedList.isEmpty)
+                            Container(
+                              padding: const EdgeInsets.all(48),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.grey.shade200),
+                              ),
+                              child: Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.favorite_border, size: 48, color: Colors.grey),
+                                    const SizedBox(height: 16),
+                                    const Text('No saved properties yet', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                    const SizedBox(height: 8),
+                                    Text('Stays you save will appear here in folders.', style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else
+                            GridView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                crossAxisSpacing: 16,
+                                mainAxisSpacing: 16,
+                                childAspectRatio: 1.3,
+                              ),
+                              itemCount: savedList.length,
+                              itemBuilder: (context, index) {
+                                final item = savedList[index];
+                                final stars = item.rating.round().clamp(1, 5);
+                                return InkWell(
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => BookRoom(destination: item),
+                                      ),
+                                    );
+                                  },
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: Colors.grey.shade200),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius: const BorderRadius.only(topLeft: Radius.circular(8), bottomLeft: Radius.circular(8)),
+                                          child: Image.asset(item.imageUrl, width: 140, height: double.infinity, fit: BoxFit.cover),
+                                        ),
+                                        Expanded(
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(12),
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  item.name,
+                                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                                  maxLines: 2,
+                                                  overflow: TextOverflow.ellipsis,
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Row(
+                                                  children: List.generate(stars, (_) => const Icon(Icons.star, size: 12, color: Color(0xFFF5A623))),
+                                                ),
+                                                const Spacer(),
+                                                Row(
+                                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                  children: [
+                                                    Text(
+                                                      _formatPrice(item.price),
+                                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF003580)),
+                                                    ),
+                                                    IconButton(
+                                                      icon: const Icon(Icons.favorite, color: Colors.red, size: 18),
+                                                      onPressed: () {
+                                                        context.read<WishlistProvider>().toggle(item);
+                                                      },
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          const SizedBox(height: 48),
+
+                          // Suggestions section
+                          Text(suggestionTitle, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          Text(suggestionSubtitle, style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            height: 250,
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: suggestionsList.length,
+                              itemBuilder: (context, index) {
+                                final item = suggestionsList[index];
+                                return Container(
+                                  width: 200,
+                                  margin: const EdgeInsets.only(right: 16),
+                                  child: _buildSuggestionCard(item),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

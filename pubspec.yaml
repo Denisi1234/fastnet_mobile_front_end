@@ -48,6 +48,7 @@ dependencies:
   mapbox_maps_flutter: ^2.26.0
   geolocator: ^14.0.2
   pdf: ^3.11.0
+  supabase_flutter: ^2.8.0
 
 dev_dependencies:
   flutter_test:
@@ -80,6 +81,7 @@ flutter:
     - assets/images/
     - assets/fonts/ 
     - assets/animations/
+    - assets/favicon_io/
 
   fonts:
     - family: AirbnbCereal

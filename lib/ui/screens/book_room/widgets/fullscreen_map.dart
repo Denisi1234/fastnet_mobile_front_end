@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 import 'package:flutter/services.dart' show ByteData, Uint8List;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' hide Size;
 import 'package:fastnet_mobile_front_end/config/constants.dart';
 import 'package:fastnet_mobile_front_end/models/destination.dart';
@@ -123,17 +124,41 @@ class _FullscreenMapScreenState extends State<FullscreenMapScreen> {
       body: Stack(
         children: [
           // 1. Interactive map
-          MapWidget(
-            key: const ValueKey("mapWidget"),
-            cameraOptions: CameraOptions(
-              center: Point(coordinates: Position(lon, lat)),
-              zoom: 14.5,
+          if (kIsWeb)
+            Container(
+              color: const Color(0xFFE2E8F0),
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.map_outlined, size: 64, color: Color(0xFF1E88E5)),
+                    const SizedBox(height: 12),
+                    Text(
+                      widget.destination.name,
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${lat.toStringAsFixed(4)}°, ${lon.toStringAsFixed(4)}°',
+                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            MapWidget(
+              key: const ValueKey("mapWidget"),
+              cameraOptions: CameraOptions(
+                center: Point(coordinates: Position(lon, lat)),
+                zoom: 14.5,
+              ),
+              styleUri: MapboxStyles.MAPBOX_STREETS,
+              onMapCreated: _onMapCreated,
             ),
-            styleUri: MapboxStyles.MAPBOX_STREETS,
-            onMapCreated: _onMapCreated,
-          ),
 
           // 2. Custom Floating circular close button
+
           Positioned(
             top: MediaQuery.of(context).padding.top + 16,
             left: 16,
