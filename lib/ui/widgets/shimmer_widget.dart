@@ -26,10 +26,28 @@ class _ShimmerWidgetState extends State<ShimmerWidget> with SingleTickerProvider
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1000),
-    )..repeat(reverse: true);
+    );
+
     _animation = Tween<double>(begin: 0.35, end: 0.85).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // Respect the OS reduce-motion setting: hold a static placeholder instead
+    // of pulsing forever. Re-evaluated on every dependency change so toggling
+    // the system setting takes effect immediately.
+    final reduced = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduced) {
+      _controller
+        ..stop()
+        ..value = 0.5;
+    } else if (!_controller.isAnimating) {
+      _controller.repeat(reverse: true);
+    }
   }
 
   @override

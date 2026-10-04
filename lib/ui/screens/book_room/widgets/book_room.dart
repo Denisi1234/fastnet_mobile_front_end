@@ -1458,10 +1458,24 @@ class _TrustPillState extends State<_TrustPill>
       _pulseCtrl = AnimationController(
         vsync: this,
         duration: const Duration(milliseconds: 1400),
-      )..repeat(reverse: true);
+      );
       _scaleAnim = Tween<double>(begin: 0.96, end: 1.04).animate(
         CurvedAnimation(parent: _pulseCtrl!, curve: Curves.easeInOut),
       );
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (_pulseCtrl == null) return;
+    if (reduced) {
+      _pulseCtrl!
+        ..stop()
+        ..value = 0.5;
+    } else if (!_pulseCtrl!.isAnimating) {
+      _pulseCtrl!.repeat(reverse: true);
     }
   }
 
@@ -1533,11 +1547,24 @@ class _PulseMarkerState extends State<PulseMarker> with SingleTickerProviderStat
     _controller = AnimationController(
       duration: const Duration(milliseconds: 800),
       vsync: this,
-    )..repeat(reverse: true);
+    );
     _animation = Tween<double>(begin: 1.0, end: 1.5).animate(CurvedAnimation(
       parent: _controller,
       curve: Curves.easeInOut,
     ));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduced) {
+      _controller
+        ..stop()
+        ..value = 0.0;
+    } else if (!_controller.isAnimating) {
+      _controller.repeat(reverse: true);
+    }
   }
 
   @override

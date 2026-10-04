@@ -1296,7 +1296,22 @@ class _BouncingDotsState extends State<_BouncingDots> with SingleTickerProviderS
     _animController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
-    )..repeat();
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The typing indicator still needs to show *something* under reduced
+    // motion, so freeze it at a representative point in the cycle.
+    final reduced = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduced) {
+      _animController
+        ..stop()
+        ..value = 0.25;
+    } else if (!_animController.isAnimating) {
+      _animController.repeat();
+    }
   }
 
   @override

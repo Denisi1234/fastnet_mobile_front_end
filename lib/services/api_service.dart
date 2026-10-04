@@ -7,15 +7,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
   static String get baseUrl {
-    // Update this to your production API URL before releasing
+    // Real working sync — unified with web/src/Service/FastnetApiClient.php env BACKEND_API_URL
+    const String envUrl = String.fromEnvironment('BACKEND_API_URL', defaultValue: '');
+    if (envUrl.isNotEmpty) return envUrl; // --dart-define=BACKEND_API_URL=https://api.fastnetstays.com/api
     const String productionUrl = 'https://api.fastnetstays.com/api';
     const String devUrl = 'http://10.0.2.2:8000/api';
     const String devUrliOS = 'http://localhost:8000/api';
-
-    // Set to true when deploying to production
-    const bool isProduction = false;
+    const bool isProduction = bool.fromEnvironment('IS_PRODUCTION', defaultValue: false);
     if (isProduction) return productionUrl;
-
     if (!kIsWeb && Platform.isAndroid) return devUrl;
     return devUrliOS;
   }

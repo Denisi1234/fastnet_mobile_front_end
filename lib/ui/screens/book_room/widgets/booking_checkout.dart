@@ -594,105 +594,178 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
     );
   }
 
-  void _executeFinalizeBooking() {
+  Future<void> _executeFinalizeBooking() async {
     setState(() {
       _isLoading = true;
       _loadingStep = 0;
     });
 
-    // Step 0 -> Step 1 after 1200ms
-    Timer(const Duration(milliseconds: 1200), () {
-      if (mounted) {
-        setState(() {
-          _loadingStep = 1;
-        });
-      }
+    // Step 0: the room lock the guest is already holding is settled server-side.
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    setState(() => _loadingStep = 1);
+
+    // Step 1: create the booking for real. This used to be a hard-coded 3.6s
+    // timer ladder that invented a booking code locally and reported the
+    // booking as "Confirmed" without the backend ever being involved.
+    final created = await ApiService.createBooking(
+      widget.selectedRoomId,
+      _checkInIso(),
+      _checkOutIso(),
+    );
+
+    if (!mounted) return;
+    setState(() => _loadingStep = 2);
+
+    final serverBooking = created ?? const <String, dynamic>{};
+    final serverCode = (serverBooking['booking_code'] ?? serverBooking['code'])?.toString();
+    final persisted = serverCode != null && serverCode.isNotEmpty;
+
+    // Prefer the code and total the server issued. Only fall back to a local
+    // reference when the request could not be completed at all.
+    final bookingCode = persisted ? serverCode : _localReferenceCode();
+    final bookingStatus = persisted
+        ? (serverBooking['status']?.toString() ?? 'Pending')
+        : 'Pending';
+    final roomTotal = widget.destination.price * _currentNumNights;
+    final grandTotal = (serverBooking['total_price'] as num?)?.toDouble() ?? roomTotal;
+
+    if (!mounted) return;
+    setState(() {
+      _loadingStep = 3;
+      _isLoading = false;
     });
 
-    // Step 1 -> Step 2 after 2400ms
-    Timer(const Duration(milliseconds: 2400), () {
-      if (mounted) {
-        setState(() {
-          _loadingStep = 2;
-        });
+    final dt = DateTime.now();
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final month = months[dt.month - 1];
+    final day = dt.day.toString().padLeft(2, '0');
+    final year = dt.year;
+    final period = dt.hour >= 12 ? 'PM' : 'AM';
+    var hour = dt.hour % 12;
+    if (hour == 0) hour = 12;
+    final hourStr = hour.toString().padLeft(2, '0');
+    final minuteStr = dt.minute.toString().padLeft(2, '0');
+    final paymentTimeStr = '$month $day, $year - $hourStr:$minuteStr $period';
+
+    final bookingData = {
+      'name': '${widget.destination.name} - Room ${widget.selectedRoomNumber}',
+      'city': widget.destination.city,
+      'area': widget.destination.area,
+      'dates': _currentDatesText,
+      'nights': _currentNumNights,
+      'guests': _currentGuestsCount,
+      'price': grandTotal,
+      'code': bookingCode,
+      'imageUrl': widget.destination.imageUrl,
+      'status': bookingStatus,
+      'paymentTime': paymentTimeStr,
+    };
+    BookingsData.list.add(bookingData);
+
+    if (!persisted) {
+      // Nothing was stored server-side, so mirror to the realtime store for
+      // support to reconcile. Status stays "Pending" - never claim otherwise.
+      SupabaseService.createBookingRecord({
+        'booking_code': bookingCode,
+        'lodge_name': widget.destination.name,
+        'room_number': widget.selectedRoomNumber,
+        'guest_name': UserSession.userName ?? 'Guest User',
+        'guest_phone': UserSession.userPhone ?? '',
+        'dates': _currentDatesText,
+        'nights': _currentNumNights,
+        'total_price': grandTotal,
+        'payment_method': _selectedPaymentMethod,
+        'status': bookingStatus,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    }
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BookingSuccessScreen(
+          destination: widget.destination,
+          selectedDatesText: _currentDatesText,
+          numNights: _currentNumNights,
+          guestName: UserSession.userName ?? 'Guest User',
+          guestPhone: UserSession.userPhone ?? '+255 712 345 678',
+          paymentMethod: _selectedPaymentMethod,
+          bookingCode: bookingCode,
+          selectedRoomNumber: widget.selectedRoomNumber,
+          paymentTime: paymentTimeStr,
+        ),
+      ),
+      (route) => route.isFirst,
+    );
+  }
+
+  /// Last-resort local reference, used only when the booking API is
+  /// unreachable so the guest still has something to quote to support.
+  String _localReferenceCode() {
+    final random = Random();
+    final city = widget.destination.city;
+    final prefix = city.length >= 3 ? city.substring(0, 3).toUpperCase() : city.toUpperCase();
+    return 'TMP-${10000 + random.nextInt(90000)}-$prefix';
+  }
+
+  /// Check-in / check-out for the API.
+  ///
+  /// The stay reaches this screen as a display label ("12 Nov 2026 - 15 Nov
+  /// 2026"), parsed the same way book_room.dart parses it. Anything
+  /// unparseable falls back to today + the selected night count rather than
+  /// throwing, so a malformed label can never block a booking.
+  ({DateTime start, DateTime end}) _stayDates() {
+    final nights = _currentNumNights > 0 ? _currentNumNights : 1;
+    final today = DateTime.now();
+    final fallbackStart = DateTime(today.year, today.month, today.day);
+
+    try {
+      const monthsAbbr = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
+
+      final text = _currentDatesText.replaceAll('–', '-').replaceAll(' - ', '-').trim();
+      final yearMatch = RegExp(r'\d{4}').firstMatch(text);
+      final year = yearMatch != null ? int.parse(yearMatch.group(0)!) : today.year;
+
+      final parts = text.split('-').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
+      if (parts.length < 2) {
+        throw const FormatException('missing end date');
       }
-    });
 
-    // Step 2 -> Finalize after 3600ms
-    Timer(const Duration(milliseconds: 3600), () {
-      if (mounted) {
-        setState(() {
-          _loadingStep = 3;
-          _isLoading = false;
-        });
-        
-        final random = Random();
-        final bookingCode = 'TZ-${10000 + random.nextInt(90000)}-${widget.destination.city.substring(0, 3).toUpperCase()}';
-
-        final dt = DateTime.now();
-        final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        final month = months[dt.month - 1];
-        final day = dt.day.toString().padLeft(2, '0');
-        final year = dt.year;
-        final period = dt.hour >= 12 ? 'PM' : 'AM';
-        var hour = dt.hour % 12;
-        if (hour == 0) hour = 12;
-        final hourStr = hour.toString().padLeft(2, '0');
-        final minuteStr = dt.minute.toString().padLeft(2, '0');
-        final paymentTimeStr = '$month $day, $year - $hourStr:$minuteStr $period';
-
-        final roomTotal = widget.destination.price * _currentNumNights;
-        final vatTotal = (roomTotal * 0.125).round();
-        final grandTotal = roomTotal + vatTotal;
-        final bookingData = {
-          'name': '${widget.destination.name} - Room ${widget.selectedRoomNumber}',
-          'city': widget.destination.city,
-          'area': widget.destination.area,
-          'dates': _currentDatesText,
-          'nights': _currentNumNights,
-          'guests': _currentGuestsCount,
-          'price': grandTotal,
-          'code': bookingCode,
-          'imageUrl': widget.destination.imageUrl,
-          'status': 'Confirmed',
-          'paymentTime': paymentTimeStr,
-        };
-        BookingsData.list.add(bookingData);
-
-        // Sync with Supabase real-time database
-        SupabaseService.createBookingRecord({
-          'booking_code': bookingCode,
-          'lodge_name': widget.destination.name,
-          'room_number': widget.selectedRoomNumber,
-          'guest_name': UserSession.userName ?? 'Guest User',
-          'guest_phone': UserSession.userPhone ?? '',
-          'dates': _currentDatesText,
-          'nights': _currentNumNights,
-          'total_price': grandTotal,
-          'payment_method': _selectedPaymentMethod,
-          'status': 'Confirmed',
-          'created_at': DateTime.now().toIso8601String(),
-        });
-
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(
-            builder: (context) => BookingSuccessScreen(
-              destination: widget.destination,
-              selectedDatesText: _currentDatesText,
-              numNights: _currentNumNights,
-              guestName: UserSession.userName ?? 'Guest User',
-              guestPhone: UserSession.userPhone ?? '+255 712 345 678',
-              paymentMethod: _selectedPaymentMethod,
-              bookingCode: bookingCode,
-              selectedRoomNumber: widget.selectedRoomNumber,
-              paymentTime: paymentTimeStr,
-            ),
-          ),
-          (route) => route.isFirst,
-        );
+      DateTime parse(String part, int fallbackMonth) {
+        final cleaned = part.replaceAll(RegExp(r',\s*\d{4}'), '').trim();
+        final tokens = cleaned.split(RegExp(r'\s+'));
+        final month = monthsAbbr.indexOf(tokens.first) + 1;
+        if (month <= 0 || tokens.length < 2) {
+          throw FormatException('bad date "$part"');
+        }
+        return DateTime(year, month, int.parse(tokens[1]));
       }
-    });
+
+      return (start: parse(parts.first, today.month), end: parse(parts.last, today.month));
+    } catch (_) {
+      return (
+        start: fallbackStart,
+        end: fallbackStart.add(Duration(days: nights)),
+      );
+    }
+  }
+
+  String _checkInIso() {
+    final start = _stayDates().start;
+    return '${start.year.toString().padLeft(4, '0')}-'
+        '${start.month.toString().padLeft(2, '0')}-'
+        '${start.day.toString().padLeft(2, '0')}';
+  }
+
+  String _checkOutIso() {
+    final end = _stayDates().end;
+    return '${end.year.toString().padLeft(4, '0')}-'
+        '${end.month.toString().padLeft(2, '0')}-'
+        '${end.day.toString().padLeft(2, '0')}';
   }
 
   Widget _buildLoadingProgressItem({

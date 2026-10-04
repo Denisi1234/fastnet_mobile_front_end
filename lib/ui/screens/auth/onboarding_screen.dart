@@ -58,7 +58,22 @@ class _OnboardingScreenState extends State<OnboardingScreen> with SingleTickerPr
     _glowController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The button glow is decorative, so it must not pulse indefinitely for
+    // users who have asked the system to reduce motion.
+    final reduced = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduced) {
+      _glowController
+        ..stop()
+        ..value = 1.0;
+    } else if (!_glowController.isAnimating) {
+      _glowController.repeat(reverse: true);
+    }
   }
 
   @override

@@ -10,6 +10,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' hide Size;
 import 'filter_bottom_sheet.dart';
 import 'package:fastnet_mobile_front_end/ui/widgets/interactive_card.dart';
 import 'package:fastnet_mobile_front_end/ui/widgets/fade_slide_page_route.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/shimmer_widget.dart';
 
 class SearchResultsScreen extends StatefulWidget {
   final String searchQuery;
@@ -39,8 +40,8 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
   String _selectedSort = 'Best Match';
   late ScrollController _scrollController;
   late PageController _pageController;
-  int _loadedItemsCount = 4;
-  bool _isLoadingMore = false;
+  int _loadedItemsCount = 12;
+
   int _selectedMapLodgeIndex = 0;
 
   MapboxMap? _mapController;
@@ -216,13 +217,10 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
     _pageController = PageController(viewportFraction: 0.88, initialPage: _selectedMapLodgeIndex);
-    Future.delayed(const Duration(milliseconds: 350), () {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    });
+    // The result set is already in memory, so there is nothing to wait for.
+    // This used to hold the skeleton on screen for a fixed 350ms regardless
+    // of how fast the data arrived.
+    _isLoading = false;
   }
 
   @override
@@ -234,20 +232,19 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
     super.dispose();
   }
 
+  /// Items added per scroll-near-end event.
+  static const int _pageSize = 12;
+
   void _onScroll() {
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 50) {
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
       final totalDestinations = _getSortedDestinations().length;
-      if (!_isLoadingMore && _loadedItemsCount < totalDestinations) {
+      final next = min(_loadedItemsCount + _pageSize, totalDestinations);
+      if (next > _loadedItemsCount) {
+        // No artificial 1s-per-3-items delay: the list is local, so extend it
+        // immediately rather than trickling rows onto the screen.
         setState(() {
-          _isLoadingMore = true;
-        });
-        Future.delayed(const Duration(milliseconds: 1000), () {
-          if (mounted) {
-            setState(() {
-              _loadedItemsCount = _loadedItemsCount + 3;
-              _isLoadingMore = false;
-            });
-          }
+          _loadedItemsCount = next;
         });
       }
     }
@@ -343,7 +340,7 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                     onTap: () {
                       setState(() {
                         _selectedSort = option;
-                        _loadedItemsCount = 4; // reset pagination limit
+                        _loadedItemsCount = 12; // reset pagination limit
                       });
                       Navigator.pop(context);
                     },
@@ -727,7 +724,7 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                             if (result != null) {
                               setState(() {
                                 _filterOptions = result;
-                                _loadedItemsCount = 4;
+                                _loadedItemsCount = 12;
                               });
                               _showFilterFeedback(_getSortedDestinations().length);
                             }
@@ -1215,65 +1212,6 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
           ),
         ],
       ),
-    );
-  }
-}
-
-class ShimmerWidget extends StatefulWidget {
-  final double width;
-  final double height;
-  final double borderRadius;
-
-  const ShimmerWidget({
-    Key? key,
-    required this.width,
-    required this.height,
-    this.borderRadius = 8.0,
-  }) : super(key: key);
-
-  @override
-  State<ShimmerWidget> createState() => _ShimmerWidgetState();
-}
-
-class _ShimmerWidgetState extends State<ShimmerWidget> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    )..repeat(reverse: true);
-    _animation = Tween<double>(begin: 0.35, end: 0.85).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _animation,
-      builder: (context, child) {
-        return Opacity(
-          opacity: _animation.value,
-          child: Container(
-            width: widget.width,
-            height: widget.height,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade300,
-              borderRadius: BorderRadius.circular(widget.borderRadius),
-            ),
-          ),
-        );
-      },
     );
   }
 }

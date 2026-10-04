@@ -1444,12 +1444,6 @@ class _ExploreState extends State<Explore> {
                     ),
                   ),
                 ),
-                      child: Text(
-                        room.badge,
-                        style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
                   Positioned(
                     top: 10,
                     right: 10,
