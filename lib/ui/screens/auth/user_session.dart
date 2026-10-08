@@ -469,6 +469,7 @@ class BookingsData {
           'nights': nights > 0 ? nights : 1,
           'price': (double.tryParse(m['total_price']?.toString() ?? '0') ?? 0).toInt(),
           'code': (m['booking_code'] ?? m['code'] ?? '').toString(),
+          'verify_url': (m['verify_url'] ?? '').toString(),
           'imageUrl': (img is String && img.isNotEmpty) ? img : 'assets/images/house3.webp',
           'status': status,
           'payment_status': m['payment_status'],

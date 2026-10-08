@@ -20,6 +20,10 @@ class ReceiptScreen extends StatelessWidget {
   final int pricePerNight;
   final String? paymentTime;
   final List<Map<String, dynamic>> extraServices;
+  /// Signed verification URL from the backend (`verify_url`). When present
+  /// the QR encodes it so any camera opens the live verify page; otherwise
+  /// it falls back to the legacy booking payload.
+  final String? verifyUrl;
 
   const ReceiptScreen({
     Key? key,
@@ -35,6 +39,7 @@ class ReceiptScreen extends StatelessWidget {
     required this.pricePerNight,
     this.paymentTime,
     this.extraServices = const [],
+    this.verifyUrl,
   }) : super(key: key);
 
   String _formatPrice(int price) {
@@ -82,6 +87,7 @@ class ReceiptScreen extends StatelessWidget {
       pricePerNight: pricePerNight,
       paymentTime: paymentTime,
       extraServices: extraServices,
+      verifyUrl: verifyUrl,
     );
 
     final output = await getTemporaryDirectory();
@@ -482,7 +488,9 @@ class ReceiptScreen extends StatelessWidget {
                                 child: Column(
                                   children: [
                                     QrImageView(
-                                      data: 'FASTNETSTAYS-BOOKING:$bookingCode|LODGE:$lodgeName|ROOM:$roomNumber|GUEST:$guestName',
+                                      data: (verifyUrl?.isNotEmpty ?? false)
+                                          ? verifyUrl!
+                                          : 'FASTNETSTAYS-BOOKING:$bookingCode|LODGE:$lodgeName|ROOM:$roomNumber|GUEST:$guestName',
                                       version: QrVersions.auto,
                                       size: 58.0,
                                       gapless: false,

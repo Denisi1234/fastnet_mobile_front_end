@@ -113,6 +113,7 @@ class ReceiptPdfService {
     required int pricePerNight,
     String? paymentTime,
     List<Map<String, dynamic>> extraServices = const [],
+    String? verifyUrl,
   }) async {
     final pdf = pw.Document();
 
@@ -465,7 +466,9 @@ class ReceiptPdfService {
                                 children: [
                                   pw.BarcodeWidget(
                                     barcode: pw.Barcode.qrCode(),
-                                    data: 'FASTNETSTAYS-BOOKING:$bookingCode|LODGE:$cleanLodgeName|ROOM:$cleanRoomNumber|GUEST:$cleanGuestName',
+                                    data: (verifyUrl?.isNotEmpty ?? false)
+                                        ? verifyUrl!
+                                        : 'FASTNETSTAYS-BOOKING:$bookingCode|LODGE:$cleanLodgeName|ROOM:$cleanRoomNumber|GUEST:$cleanGuestName',
                                     width: 62,
                                     height: 62,
                                   ),

@@ -526,6 +526,8 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
     final serverCode =
         (top['booking_code'] ?? nested['booking_code'] ?? top['code'])
             ?.toString();
+    final serverVerifyUrl =
+        (top['verify_url'] ?? nested['verify_url'])?.toString();
     final bookingId = int.tryParse(
             (nested['id'] ?? top['booking_id'] ?? '').toString()) ??
         0;
@@ -610,6 +612,9 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
           : 'Pending',
       'payment_status': payStatus,
       'paymentTime': paymentTimeStr,
+      'verify_url': (serverVerifyUrl?.isNotEmpty ?? false)
+          ? serverVerifyUrl
+          : '',
     };
     BookingsData.list.add(bookingData);
     await BookingsData.save();
@@ -652,6 +657,7 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
           paymentPhone: _phoneCtrl.text.trim(),
           paid: payStatus.toLowerCase() == 'paid',
           paymentStatus: payStatus,
+          verifyUrl: serverVerifyUrl,
         ),
       ),
       (route) => route.isFirst,
@@ -1851,6 +1857,7 @@ class BookingSuccessScreen extends StatefulWidget {
   final String? paymentPhone;
   final bool paid;
   final String paymentStatus;
+  final String? verifyUrl;
 
   const BookingSuccessScreen({
     Key? key,
@@ -1870,6 +1877,7 @@ class BookingSuccessScreen extends StatefulWidget {
     this.paymentPhone,
     this.paid = true,
     this.paymentStatus = 'paid',
+    this.verifyUrl,
   }) : super(key: key);
 
   @override
@@ -2208,6 +2216,7 @@ class _BookingSuccessScreenState extends State<BookingSuccessScreen> {
                             pricePerNight:
                                 widget.destination.price,
                             paymentTime: widget.paymentTime,
+                            verifyUrl: widget.verifyUrl,
                           ),
                         ),
                       );

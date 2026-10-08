@@ -121,6 +121,9 @@ class BookingDetailsScreen extends StatelessWidget {
           numNights: nights,
           pricePerNight: perNight > 0 ? perNight : dest.price,
           paymentTime: b['paymentTime']?.toString(),
+          verifyUrl: (b['verify_url']?.toString().isNotEmpty ?? false)
+              ? b['verify_url'].toString()
+              : null,
         ),
       ),
     );

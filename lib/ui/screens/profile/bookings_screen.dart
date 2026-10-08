@@ -158,6 +158,9 @@ class _BookingsScreenState extends State<BookingsScreen> {
               (b['nights'] is num) ? (b['nights'] as num).toInt() : 1,
           pricePerNight: dest.price,
           paymentTime: b['paymentTime'],
+          verifyUrl: (b['verify_url']?.toString().isNotEmpty ?? false)
+              ? b['verify_url'].toString()
+              : null,
         ),
       ),
     );
