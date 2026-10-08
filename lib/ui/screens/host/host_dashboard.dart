@@ -2,10 +2,7 @@ import 'package:flutter/material.dart';
 import 'manage_listings.dart';
 import 'host_bookings.dart';
 import 'add_property.dart';
-import 'room_map_screen.dart';
 import 'financial_reports.dart';
-import 'staff_management.dart';
-import 'host_messages.dart';
 
 class HostDashboard extends StatelessWidget {
   const HostDashboard({Key? key}) : super(key: key);
@@ -49,10 +46,7 @@ class HostDashboard extends StatelessWidget {
             _buildToolMenu(context, 'My Properties', 'Manage all your lodge listings', Icons.format_list_bulleted, const ManageListings()),
             _buildToolMenu(context, 'Add New Property', 'Create a new listing for your lodge', Icons.add_business, const AddProperty()),
             _buildToolMenu(context, 'Guest Bookings', 'View and manage all reservations', Icons.people_alt_outlined, const HostBookings()),
-            _buildToolMenu(context, 'Room Mapping Map', 'Visual booking sheet (Red = Booked)', Icons.grid_view, const RoomMapScreen()),
             _buildToolMenu(context, 'Financial Reports', 'Track income and payouts', Icons.bar_chart, const FinancialReports()),
-            _buildToolMenu(context, 'Staff Management', 'Assign roles and permissions', Icons.manage_accounts, const StaffManagement()),
-            _buildToolMenu(context, 'Guest Messages', 'Chat with current and upcoming guests', Icons.forum_outlined, const HostMessagesScreen()),
           ],
         ),
       ),

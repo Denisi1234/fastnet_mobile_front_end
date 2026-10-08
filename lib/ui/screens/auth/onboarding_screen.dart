@@ -20,7 +20,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with SingleTickerPr
 
   final List<Map<String, String>> _slides = [
     {
-      'title': 'Welcome to FASTNET',
+      'title': 'Welcome to FastNet Stays',
       'subtitle': 'Discover authentic, curated stays across East Africa. Dodoma, Zanzibar, Dar es Salaam, and more are now at your fingertips.',
       'lottie': 'https://assets10.lottiefiles.com/packages/lf20_5n8y2lka.json',
       'image': 'assets/images/house.jpeg',

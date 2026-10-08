@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/property_image.dart';
 import 'package:fastnet_mobile_front_end/services/api_service.dart';
 import 'package:fastnet_mobile_front_end/services/notification_service.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
@@ -778,17 +779,14 @@ class _GuestChatDetailScreenState extends State<GuestChatDetailScreen> {
                                       child: Icon(Icons.hotel_rounded, color: Colors.red.shade900),
                                     ),
                                   ))
-                            : Image.asset(
-                                widget.thread['avatar'].contains('man') ? 'assets/images/room.webp' : widget.thread['avatar'],
+                            : PropertyImage(
+                                url: (widget.thread['avatar'].contains('man')
+                                        ? 'assets/images/room.webp'
+                                        : widget.thread['avatar'])
+                                    .toString(),
                                 width: 64,
                                 height: 64,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  width: 64,
-                                  height: 64,
-                                  color: Colors.red.shade50,
-                                  child: Icon(Icons.hotel_rounded, color: Colors.red.shade900),
-                                ),
                               ),
                       ),
                       const SizedBox(width: 12),
@@ -1158,8 +1156,8 @@ class _GuestChatDetailScreenState extends State<GuestChatDetailScreen> {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
-            child: Image.asset(
-              message['attachmentUrl'] as String,
+            child: PropertyImage(
+              url: message['attachmentUrl'] as String,
               width: 200,
               height: 120,
               fit: BoxFit.cover,

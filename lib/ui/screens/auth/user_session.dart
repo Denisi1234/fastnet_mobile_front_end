@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fastnet_mobile_front_end/models/destination.dart';
@@ -24,6 +23,14 @@ class UserSession {
   static String? address;
   static String? emergencyContact;
 
+  /// Web parity (`profile_sidebar.php` role gating): 'guest' | 'owner' | 'admin'.
+  static String userRole = 'guest';
+
+  /// Web parity (`my-profile.php` avatar badges): initial-letter avatar
+  /// colors, e.g. bg '#f0f9ff' / fg '#0284c7'. Null = default blue badge.
+  static String? avatarBg;
+  static String? avatarFg;
+
   static ImageProvider getProfileImageProvider() {
     if (profileImagePath != null) {
       final f = File(profileImagePath!);
@@ -43,6 +50,9 @@ class UserSession {
       userPhone = prefs.getString('session_userPhone');
       userId = prefs.getInt('session_userId');
       userAvatar = prefs.getString('session_userAvatar') ?? 'assets/images/man.jpeg';
+      userRole = prefs.getString('session_userRole') ?? 'guest';
+      avatarBg = prefs.getString('session_avatarBg');
+      avatarFg = prefs.getString('session_avatarFg');
       profileImagePath = prefs.getString('session_profileImagePath');
       dateOfBirth = prefs.getString('session_dateOfBirth');
       gender = prefs.getString('session_gender');
@@ -50,17 +60,32 @@ class UserSession {
       address = prefs.getString('session_address');
       emergencyContact = prefs.getString('session_emergencyContact');
 
-      // Load wishlist
-      final wishNames = prefs.getStringList('wishlist_names') ?? [];
-      WishlistData.list.clear();
-      for (final name in wishNames) {
-        final match = destinations.where((d) => d.name == name);
-        if (match.isNotEmpty) {
-          WishlistData.list.add(match.first);
+      // Load wishlist (persisted as full JSON so it survives before the
+      // live `destinations` cache is filled from the backend).
+      try {
+        final wishRaw = prefs.getString('wishlist_json');
+        WishlistData.list.clear();
+        if (wishRaw != null) {
+          final decoded = jsonDecode(wishRaw) as List;
+          for (final item in decoded) {
+            try {
+              WishlistData.list.add(Destination.fromDraftJson(Map<String, dynamic>.from(item)));
+            } catch (_) {}
+          }
+        } else {
+          // Legacy name-based entries from before the backend cutover.
+          final wishNames = prefs.getStringList('wishlist_names') ?? [];
+          for (final name in wishNames) {
+            final match = destinations.where((d) => d.name == name);
+            if (match.isNotEmpty) WishlistData.list.add(match.first);
+          }
         }
-      }
+      } catch (_) {}
 
-      // Load bookings
+      // Load bookings (+ last successful sync stamp for the
+      // offline "Updated X ago" banner).
+      BookingsData.lastSyncedAt = DateTime.tryParse(
+          prefs.getString('bookings_synced_at') ?? '');
       final bookingsJson = prefs.getString('bookings_data');
       if (bookingsJson != null) {
         final decoded = jsonDecode(bookingsJson) as List;
@@ -116,6 +141,17 @@ class UserSession {
         await prefs.remove('session_userId');
       }
       await prefs.setString('session_userAvatar', userAvatar);
+      await prefs.setString('session_userRole', userRole);
+      if (avatarBg != null) {
+        await prefs.setString('session_avatarBg', avatarBg!);
+      } else {
+        await prefs.remove('session_avatarBg');
+      }
+      if (avatarFg != null) {
+        await prefs.setString('session_avatarFg', avatarFg!);
+      } else {
+        await prefs.remove('session_avatarFg');
+      }
       if (profileImagePath != null) {
         await prefs.setString('session_profileImagePath', profileImagePath!);
       } else {
@@ -171,6 +207,14 @@ class UserSession {
     save();
   }
 
+  static String _normalizeRole(dynamic raw, String fallback) {
+    final r = (raw ?? '').toString().toLowerCase().trim();
+    if (r == 'owner' || r == 'admin' || r == 'guest' || r == 'host') {
+      return r == 'host' ? 'owner' : r;
+    }
+    return fallback;
+  }
+
   static Future<bool> loginWithApi(String email, String password) async {
     final response = await ApiService.login(email, password);
     if (response != null) {
@@ -180,7 +224,38 @@ class UserSession {
       userEmail = user['email'] ?? email;
       userPhone = user['phone_number'] ?? '';
       userId = user['id'] is int ? user['id'] : int.tryParse(user['id'].toString());
+      userRole = _normalizeRole(user['role'], 'guest');
       userAvatar = userEmail!.toLowerCase().contains('traveler') ? 'assets/images/man.jpeg' : 'assets/images/man2.jpeg';
+      await save();
+      await BookingsData.syncFromApi();
+      return true;
+    }
+    return false;
+  }
+
+  /// Passwordless sign-in (web parity: `LoginOtpController@verify`
+  /// returns the same `{access_token, user}` shape as password login).
+  static Future<bool> loginWithOtp(String contact, String code) async {
+    final data = await ApiService.verifyLoginOtp(contact, code);
+    if (data != null) {
+      final user = data['user'];
+      isLoggedIn = true;
+      if (user is Map) {
+        userName = user['name']?.toString() ?? contact;
+        userEmail = user['email']?.toString() ?? contact;
+        userPhone = user['phone_number']?.toString() ?? '';
+        userId = user['id'] is int
+            ? user['id'] as int
+            : int.tryParse(user['id']?.toString() ?? '');
+        userRole = _normalizeRole(user['role'], 'customer');
+      } else {
+        userName = contact;
+        userEmail = contact;
+        userRole = 'customer';
+      }
+      userAvatar = (userEmail ?? '').toLowerCase().contains('traveler')
+          ? 'assets/images/man.jpeg'
+          : 'assets/images/man2.jpeg';
       await save();
       await BookingsData.syncFromApi();
       return true;
@@ -209,6 +284,7 @@ class UserSession {
       userEmail = user['email'] ?? email;
       userPhone = user['phone_number'] ?? phone;
       userId = user['id'] is int ? user['id'] : int.tryParse(user['id'].toString());
+      userRole = _normalizeRole(user['role'], _normalizeRole(role, 'guest'));
       userAvatar = userEmail!.toLowerCase().contains('traveler') ? 'assets/images/man.jpeg' : 'assets/images/man2.jpeg';
       await save();
       await BookingsData.syncFromApi();
@@ -224,6 +300,9 @@ class UserSession {
     userPhone = null;
     userId = null;
     userAvatar = 'assets/images/man.jpeg';
+    userRole = 'guest';
+    avatarBg = null;
+    avatarFg = null;
     profileImagePath = null;
     dateOfBirth = null;
     gender = null;
@@ -244,6 +323,9 @@ class UserSession {
     userPhone = null;
     userId = null;
     userAvatar = 'assets/images/man.jpeg';
+    userRole = 'guest';
+    avatarBg = null;
+    avatarFg = null;
     profileImagePath = null;
     dateOfBirth = null;
     gender = null;
@@ -259,12 +341,19 @@ class WishlistData {
   static final List<Destination> list = [];
 
   static bool contains(Destination destination) {
+    if (destination.id != null) {
+      return list.any((item) => item.id == destination.id);
+    }
     return list.any((item) => item.name == destination.name);
   }
 
   static void toggle(Destination destination) {
     if (contains(destination)) {
-      list.removeWhere((item) => item.name == destination.name);
+      if (destination.id != null) {
+        list.removeWhere((item) => item.id == destination.id);
+      } else {
+        list.removeWhere((item) => item.name == destination.name);
+      }
     } else {
       list.add(destination);
     }
@@ -274,8 +363,8 @@ class WishlistData {
   static Future<void> save() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final names = list.map((d) => d.name).toList();
-      await prefs.setStringList('wishlist_names', names);
+      await prefs.setString('wishlist_json', jsonEncode(list.map((d) => d.toJson()).toList()));
+      await prefs.remove('wishlist_names');
     } catch (e) {
       // Ignore
     }
@@ -283,44 +372,9 @@ class WishlistData {
 }
 
 class BookingsData {
-  static final List<Map<String, dynamic>> list = [
-    {
-      'name': 'Kariakoo Budget Lodge',
-      'city': 'Dar es Salaam',
-      'area': 'Kariakoo',
-      'dates': 'Jun 12 – 15, 2026',
-      'nights': 3,
-      'price': 110000,
-      'code': 'TZ-84920-DAR',
-      'imageUrl': 'assets/images/house3.webp',
-      'status': 'Completed',
-      'paymentTime': 'Jun 01, 2026 - 10:15 AM',
-    },
-    {
-      'name': 'Zanzibar Sunset Beach Villa',
-      'city': 'Zanzibar',
-      'area': 'Nungwi',
-      'dates': 'Jun 26 – 29, 2026',
-      'nights': 3,
-      'price': 555000,
-      'code': 'TZ-74312-ZNBR',
-      'imageUrl': 'assets/images/home.webp',
-      'status': 'Checked In',
-      'paymentTime': 'Jun 15, 2026 - 02:30 PM',
-    },
-    {
-      'name': 'Arusha Highlands Lodge',
-      'city': 'Arusha',
-      'area': 'Mount Meru',
-      'dates': 'Jul 10 – 14, 2026',
-      'nights': 4,
-      'price': 420000,
-      'code': 'TZ-39201-ARS',
-      'imageUrl': 'assets/images/house3.webp',
-      'status': 'Confirmed',
-      'paymentTime': 'Jul 01, 2026 - 07:34 AM',
-    }
-  ];
+  /// Live bookings from the backend (`GET /bookings`) — same rows as web
+  /// `/my-booking`. Starts empty; never fake entries (web rule).
+  static final List<Map<String, dynamic>> list = [];
 
   static Future<void> save() async {
     try {
@@ -331,53 +385,103 @@ class BookingsData {
     }
   }
 
-  static Future<void> syncFromApi() async {
-    if (!UserSession.isLoggedIn) return;
+  /// Syncs the live booking list from the backend — same rows as web
+  /// `/my-booking`. Uses the real `booking_code` + `status`; never invents
+  /// codes (previous `TZ-id-DAR` scheme) or statuses.
+  /// Last successful sync moment (persisted). Null = never synced.
+  static DateTime? lastSyncedAt;
+
+  static Future<void> _persistSyncedAt() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (lastSyncedAt != null) {
+        await prefs.setString(
+            'bookings_synced_at', lastSyncedAt!.toIso8601String());
+      } else {
+        await prefs.remove('bookings_synced_at');
+      }
+    } catch (_) {}
+  }
+
+  /// Returns true only when the backend round-trip actually succeeded, so
+  /// callers can distinguish "no bookings" from "offline".
+  static Future<bool> syncFromApi() async {
+    if (!UserSession.isLoggedIn) return false;
     try {
       final apiBookings = await ApiService.fetchBookings();
-      if (apiBookings.isNotEmpty) {
-        list.clear();
-        for (var b in apiBookings) {
-          final room = b['room'] ?? {};
-          final property = room['property'] ?? {};
-          final checkInStr = b['check_in'] ?? '';
-          final checkOutStr = b['check_out'] ?? '';
-          
-          // Format date range nicely
-          String datesText = '$checkInStr – $checkOutStr';
-          try {
-            final checkInDate = DateTime.parse(checkInStr);
-            final checkOutDate = DateTime.parse(checkOutStr);
-            final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            datesText = '${months[checkInDate.month - 1]} ${checkInDate.day} – ${checkOutDate.day}, ${checkInDate.year}';
-          } catch (_) {}
+      if (ApiService.lastError != null) return false;
+      list.clear();
+      for (var b in apiBookings) {
+        if (b is! Map) continue;
+        final m = Map<String, dynamic>.from(b);
+        final room = m['room'] is Map ? Map<String, dynamic>.from(m['room']) : <String, dynamic>{};
+        final property = room['property'] is Map
+            ? Map<String, dynamic>.from(room['property'])
+            : (m['property'] is Map ? Map<String, dynamic>.from(m['property']) : <String, dynamic>{});
+        final checkInStr = (m['check_in'] ?? '').toString();
+        final checkOutStr = (m['check_out'] ?? '').toString();
 
-          final checkInDate = DateTime.tryParse(checkInStr) ?? DateTime.now();
-          final checkOutDate = DateTime.tryParse(checkOutStr) ?? DateTime.now();
-          final nights = checkOutDate.difference(checkInDate).inDays;
+        // Format date range nicely
+        String datesText = '$checkInStr – $checkOutStr';
+        try {
+          final checkInDate = DateTime.parse(checkInStr);
+          final checkOutDate = DateTime.parse(checkOutStr);
+          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          datesText = '${months[checkInDate.month - 1]} ${checkInDate.day} – ${checkOutDate.day}, ${checkInDate.year}';
+        } catch (_) {}
 
-          list.add({
-            'id': b['id'],
-            'name': property['name'] ?? 'Lodge Stay',
-            'city': property['city'] ?? 'Dar es Salaam',
-            'area': property['area'] ?? 'Mikocheni',
-            'dates': datesText,
-            'nights': nights > 0 ? nights : 1,
-            'price': (double.tryParse(b['total_price']?.toString() ?? '0') ?? 0).toInt(),
-            'code': 'TZ-${b['id'] ?? 10000}-DAR',
-            'imageUrl': property['image_url'] ?? 'assets/images/house3.webp',
-            'status': b['payment_status'] == 'paid' 
-                ? 'Confirmed' 
-                : b['payment_status'] == 'refunded' 
-                    ? 'Cancelled' 
-                    : 'Confirmed',
-            'roomNumber': room['room_number'] ?? '101',
-          });
+        final checkInDate = DateTime.tryParse(checkInStr) ?? DateTime.now();
+        final checkOutDate = DateTime.tryParse(checkOutStr) ?? DateTime.now();
+        final nights = checkOutDate.difference(checkInDate).inDays;
+
+        final rawStatus = (m['status'] ?? '').toString();
+        final payStatus = (m['payment_status'] ?? '').toString().toLowerCase();
+        String status;
+        switch (rawStatus.toLowerCase()) {
+          case 'completed':
+            status = 'Completed';
+            break;
+          case 'checked in':
+          case 'checked_in':
+            status = 'Checked In';
+            break;
+          case 'cancelled':
+          case 'canceled':
+            status = 'Cancelled';
+            break;
+          case 'confirmed':
+            status = 'Confirmed';
+            break;
+          default:
+            status = payStatus == 'paid'
+                ? 'Confirmed'
+                : (payStatus == 'refunded' ? 'Cancelled' : (rawStatus.isNotEmpty ? rawStatus : 'Pending'));
         }
-        await save();
+
+        final img = property['primary_image_url'] ?? property['image_url'];
+        list.add({
+          'id': m['id'],
+          'propertyId': property['id'],
+          'name': property['name'] ?? 'Lodge Stay',
+          'city': property['city'] ?? 'Dar es Salaam',
+          'area': property['area'] ?? 'Mikocheni',
+          'dates': datesText,
+          'nights': nights > 0 ? nights : 1,
+          'price': (double.tryParse(m['total_price']?.toString() ?? '0') ?? 0).toInt(),
+          'code': (m['booking_code'] ?? m['code'] ?? '').toString(),
+          'imageUrl': (img is String && img.isNotEmpty) ? img : 'assets/images/house3.webp',
+          'status': status,
+          'payment_status': m['payment_status'],
+          'roomNumber': room['room_number'] ?? '101',
+        });
       }
+      await save();
+      lastSyncedAt = DateTime.now();
+      await _persistSyncedAt();
+      return true;
     } catch (e) {
       debugPrint('Error syncing bookings from API: $e');
+      return false;
     }
   }
 }

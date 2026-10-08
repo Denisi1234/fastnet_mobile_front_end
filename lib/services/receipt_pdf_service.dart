@@ -1,6 +1,8 @@
 import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:fastnet_mobile_front_end/config/constants.dart';
 
 /// Builds the exact same booking confirmation e-receipt PDF that users see on
 /// screen (used both for in-app sharing and the emailed attachment).
@@ -21,15 +23,6 @@ class ReceiptPdfService {
     }));
   }
 
-  static pw.Widget _pdfDot(PdfColor color) {
-    return pw.Container(
-      width: 7.5,
-      height: 7.5,
-      margin: const pw.EdgeInsets.only(right: 4.5),
-      decoration: pw.BoxDecoration(color: color, shape: pw.BoxShape.circle),
-    );
-  }
-
   static pw.Widget _pdfDetailRow(String label, String value, {bool isBold = false}) {
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 2),
@@ -38,12 +31,12 @@ class ReceiptPdfService {
         children: [
           pw.SizedBox(
             width: 110,
-            child: pw.Text(label, style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
+            child: pw.Text(label, style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
           ),
           pw.Expanded(
             child: pw.Text(
               value,
-              style: pw.TextStyle(fontSize: 7.5, fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal, color: PdfColors.black),
+              style: pw.TextStyle(fontSize: 8.5, fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal, color: PdfColors.black),
             ),
           ),
         ],
@@ -58,18 +51,18 @@ class ReceiptPdfService {
         children: [
           pw.SizedBox(
             width: 95,
-            child: pw.Text(label, style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
+            child: pw.Text(label, style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
           ),
           pw.Expanded(
             child: pw.Container(
               padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 2),
               decoration: pw.BoxDecoration(
                 color: PdfColors.white,
-                border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                border: pw.Border.all(color: PdfColors.grey400, width: 1.0),
               ),
               child: pw.Text(
                 value,
-                style: pw.TextStyle(fontSize: 7.5, fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal),
+                style: pw.TextStyle(fontSize: 8.5, fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal),
                 textAlign: pw.TextAlign.center,
               ),
             ),
@@ -85,13 +78,13 @@ class ReceiptPdfService {
       children: [
         pw.SizedBox(
           width: 14,
-          child: pw.Text(number, style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.black)),
+          child: pw.Text(number, style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.black)),
         ),
         pw.Expanded(
           child: isImportant
               ? pw.RichText(
                   text: pw.TextSpan(
-                    style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.black, height: 1.35),
+                    style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.black, height: 1.35),
                     children: [
                       pw.TextSpan(text: 'IMPORTANT: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.red900)),
                       pw.TextSpan(text: text),
@@ -100,7 +93,7 @@ class ReceiptPdfService {
                 )
               : pw.Text(
                   text,
-                  style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.black, height: 1.35),
+                  style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.black, height: 1.35),
                 ),
         ),
       ],
@@ -133,6 +126,20 @@ class ReceiptPdfService {
     final departureDate = cleanDates.contains('-') ? cleanDates.split('-').last.trim() : 'Next Day';
     final refNo = '337038${bookingCode.replaceAll('-', '').substring(0, 4)}';
 
+    // App logo (same mark used across the app: blue pin + plane icon).
+    // Loaded from the bundled asset; falls back to a text wordmark if
+    // the asset cannot be read (e.g. outside a Flutter binding in tests).
+    Uint8List? logoBytes;
+    try {
+      final data =
+          await rootBundle.load('assets/images/fastnet_logo_icon.png');
+      logoBytes = data.buffer.asUint8List();
+    } catch (_) {
+      logoBytes = null;
+    }
+    final logoImage =
+        logoBytes != null ? pw.MemoryImage(logoBytes) : null;
+
     final roomTotal = pricePerNight * numNights;
     int extraTotal = 0;
     for (var svc in extraServices) {
@@ -144,12 +151,12 @@ class ReceiptPdfService {
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(22),
+        margin: const pw.EdgeInsets.all(18),
         build: (pw.Context context) {
           return pw.Container(
-            padding: const pw.EdgeInsets.all(18),
+            padding: const pw.EdgeInsets.all(16),
             decoration: pw.BoxDecoration(
-              border: pw.Border.all(color: PdfColors.black, width: 1.0),
+              border: pw.Border.all(color: PdfColors.black, width: 2.5),
             ),
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -159,48 +166,19 @@ class ReceiptPdfService {
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: pw.CrossAxisAlignment.end,
                   children: [
-                    pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    pw.Row(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
                       children: [
-                        pw.RichText(
-                          text: pw.TextSpan(
-                            children: [
-                              pw.TextSpan(
-                                text: 'FASTNET',
-                                style: pw.TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: pw.FontWeight.bold,
-                                  color: PdfColors.blue900,
-                                ),
-                              ),
-                              pw.TextSpan(
-                                text: 'STAYS',
-                                style: pw.TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: pw.FontWeight.bold,
-                                  color: PdfColors.red900,
-                                ),
-                              ),
-                              pw.TextSpan(
-                                text: '.com',
-                                style: pw.TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: pw.FontWeight.bold,
-                                  color: PdfColors.grey700,
-                                ),
-                              ),
-                            ],
+                        if (logoImage != null)
+                          pw.Image(logoImage, width: 30, height: 30),
+                        pw.SizedBox(width: 6),
+                        pw.Text(
+                          'fastnetstays.com',
+                          style: pw.TextStyle(
+                            fontSize: 15,
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.grey900,
                           ),
-                        ),
-                        pw.SizedBox(height: 3),
-                        pw.Row(
-                          children: [
-                            _pdfDot(PdfColors.red),
-                            _pdfDot(PdfColors.orange),
-                            _pdfDot(PdfColors.yellow),
-                            _pdfDot(PdfColors.green),
-                            _pdfDot(PdfColors.blue),
-                          ],
                         ),
                       ],
                     ),
@@ -225,7 +203,7 @@ class ReceiptPdfService {
                           pw.SizedBox(height: 2),
                           pw.Text(
                             'Please present either an electronic or paper copy of your booking confirmation upon check-in.',
-                            style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey800),
+                            style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.grey800),
                             textAlign: pw.TextAlign.end,
                           ),
                         ],
@@ -242,7 +220,7 @@ class ReceiptPdfService {
                   color: PdfColors.grey400,
                   child: pw.Text(
                     'fastnetstays.com    fastnetstays.com    fastnetstays.com    fastnetstays.com    fastnetstays.com    fastnetstays.com',
-                    style: pw.TextStyle(fontSize: 8.5, color: PdfColors.white, fontWeight: pw.FontWeight.bold),
+                    style: pw.TextStyle(fontSize: 9.5, color: PdfColors.white, fontWeight: pw.FontWeight.bold),
                   ),
                 ),
                 pw.SizedBox(height: 14),
@@ -268,16 +246,16 @@ class ReceiptPdfService {
                             children: [
                               pw.SizedBox(
                                 width: 110,
-                                child: pw.Text('Property :', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
+                                child: pw.Text('Property :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
                               ),
                               pw.Expanded(
                                 child: pw.Container(
                                   padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 3.5),
                                   decoration: pw.BoxDecoration(
-                                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                                    border: pw.Border.all(color: PdfColors.grey400, width: 1.0),
                                     color: PdfColors.white,
                                   ),
-                                  child: pw.Text(cleanLodgeName, style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold)),
+                                  child: pw.Text(cleanLodgeName, style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
                                 ),
                               ),
                             ],
@@ -288,16 +266,16 @@ class ReceiptPdfService {
                             children: [
                               pw.SizedBox(
                                 width: 110,
-                                child: pw.Text('Room Assigned :', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
+                                child: pw.Text('Room Assigned :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
                               ),
                               pw.Expanded(
                                 child: pw.Container(
                                   padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 3.5),
                                   decoration: pw.BoxDecoration(
-                                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                                    border: pw.Border.all(color: PdfColors.grey400, width: 1.0),
                                     color: PdfColors.white,
                                   ),
-                                  child: pw.Text('Room $cleanRoomNumber', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold)),
+                                  child: pw.Text('Room $cleanRoomNumber', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
                                 ),
                               ),
                             ],
@@ -308,16 +286,16 @@ class ReceiptPdfService {
                             children: [
                               pw.SizedBox(
                                 width: 110,
-                                child: pw.Text('Address :', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
+                                child: pw.Text('Address :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900)),
                               ),
                               pw.Expanded(
                                 child: pw.Container(
                                   padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 3.5),
                                   decoration: pw.BoxDecoration(
-                                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                                    border: pw.Border.all(color: PdfColors.grey400, width: 1.0),
                                     color: PdfColors.white,
                                   ),
-                                  child: pw.Text('$cleanLocation, Tanzania', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold)),
+                                  child: pw.Text('$cleanLocation, Tanzania', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
                                 ),
                               ),
                             ],
@@ -345,7 +323,7 @@ class ReceiptPdfService {
                             pw.SizedBox(height: 5),
                             pw.Text(
                               'For Full Promotion details and conditions see confirmation email',
-                              style: const pw.TextStyle(fontSize: 6.5, color: PdfColors.grey800),
+                              style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.grey800),
                             ),
                           ],
                         ),
@@ -362,7 +340,7 @@ class ReceiptPdfService {
                   color: PdfColors.grey200,
                   child: pw.RichText(
                     text: pw.TextSpan(
-                      style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.black),
+                      style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.black),
                       children: [
                         pw.TextSpan(text: 'Cancellation Policy: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
                         const pw.TextSpan(
@@ -381,7 +359,7 @@ class ReceiptPdfService {
                   color: PdfColors.grey200,
                   child: pw.Text(
                     'Benefits Included: -',
-                    style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                    style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
                   ),
                 ),
                 pw.SizedBox(height: 14),
@@ -390,7 +368,7 @@ class ReceiptPdfService {
                 pw.Container(
                   padding: const pw.EdgeInsets.all(8),
                   decoration: pw.BoxDecoration(
-                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                    border: pw.Border.all(color: PdfColors.grey400, width: 1.0),
                   ),
                   child: pw.Column(
                     children: [
@@ -399,13 +377,13 @@ class ReceiptPdfService {
                           pw.Expanded(
                             child: pw.Row(
                               children: [
-                                pw.Text('Arrival :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                                pw.Text('Arrival :', style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
                                 pw.SizedBox(width: 6),
                                 pw.Expanded(
                                   child: pw.Container(
                                     padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                                     color: PdfColors.grey300,
-                                    child: pw.Text(arrivalDate, style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
+                                    child: pw.Text(arrivalDate, style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
                                   ),
                                 ),
                               ],
@@ -415,13 +393,13 @@ class ReceiptPdfService {
                           pw.Expanded(
                             child: pw.Row(
                               children: [
-                                pw.Text('Departure :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                                pw.Text('Departure :', style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
                                 pw.SizedBox(width: 6),
                                 pw.Expanded(
                                   child: pw.Container(
                                     padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                                     color: PdfColors.grey300,
-                                    child: pw.Text(departureDate, style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
+                                    child: pw.Text(departureDate, style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.center),
                                   ),
                                 ),
                               ],
@@ -439,7 +417,7 @@ class ReceiptPdfService {
                             child: pw.Column(
                               crossAxisAlignment: pw.CrossAxisAlignment.start,
                               children: [
-                                pw.Text('Payment Details :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                                pw.Text('Payment Details :', style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
                                 pw.SizedBox(height: 4),
                                 pw.Container(
                                   width: double.infinity,
@@ -450,7 +428,7 @@ class ReceiptPdfService {
                                     children: [
                                       pw.RichText(
                                         text: pw.TextSpan(
-                                          style: const pw.TextStyle(fontSize: 7.5),
+                                          style: const pw.TextStyle(fontSize: 8.5),
                                           children: [
                                             pw.TextSpan(text: 'Please note: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.red900)),
                                             const pw.TextSpan(text: 'Payment for this booking has been processed via FastNetStays. Payment confirmation is verified by property.', style: pw.TextStyle(color: PdfColors.black)),
@@ -460,7 +438,7 @@ class ReceiptPdfService {
                                       pw.SizedBox(height: 5),
                                       pw.RichText(
                                         text: pw.TextSpan(
-                                          style: const pw.TextStyle(fontSize: 7.5),
+                                          style: const pw.TextStyle(fontSize: 8.5),
                                           children: [
                                             pw.TextSpan(text: 'Note to property: ', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.red900)),
                                             pw.TextSpan(text: 'Reservation was made under FastNetStays booking ID $bookingCode', style: const pw.TextStyle(color: PdfColors.black)),
@@ -480,7 +458,7 @@ class ReceiptPdfService {
                             child: pw.Container(
                               padding: const pw.EdgeInsets.all(6),
                               decoration: pw.BoxDecoration(
-                                border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                                border: pw.Border.all(color: PdfColors.grey400, width: 1.0),
                                 color: PdfColors.white,
                               ),
                               child: pw.Column(
@@ -494,7 +472,7 @@ class ReceiptPdfService {
                                   pw.SizedBox(height: 4),
                                   pw.Text(
                                     'Authorized Stamp & Signature',
-                                    style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900),
+                                    style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.grey900),
                                     textAlign: pw.TextAlign.center,
                                   ),
                                 ],
@@ -509,21 +487,45 @@ class ReceiptPdfService {
                 pw.SizedBox(height: 14),
 
                 // ── 6. Remarks ──────────────────────────────────────────────
-                pw.Text('Remarks :', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                pw.Text('Remarks :', style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
                 pw.SizedBox(height: 2),
-                pw.Text('Included : Taxes and fees ${formatPrice(grandTotal - roomTotal)}', style: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold)),
+                pw.Text('Included : Taxes and fees ${formatPrice(grandTotal - roomTotal)}', style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
                 pw.SizedBox(height: 2),
-                pw.Text('NonSmoke', style: const pw.TextStyle(fontSize: 7.5)),
+                pw.Text('NonSmoke', style: const pw.TextStyle(fontSize: 8.5)),
                 pw.SizedBox(height: 2),
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
                     pw.Expanded(
-                      child: pw.Text('All special requests are subject to availability upon arrival', style: const pw.TextStyle(fontSize: 7.5)),
+                      child: pw.Text('All special requests are subject to availability upon arrival', style: const pw.TextStyle(fontSize: 8.5)),
                     ),
                     pw.SizedBox(width: 8),
                     pw.Expanded(
-                      child: pw.Text('For any issues or questions, please visit www.fastnetstays.com/support.', style: const pw.TextStyle(fontSize: 7.5, color: PdfColors.grey800), textAlign: pw.TextAlign.end),
+                      child: pw.UrlLink(
+                        destination: AppConstants.supportUrl,
+                        child: pw.RichText(
+                          textAlign: pw.TextAlign.end,
+                          text: pw.TextSpan(
+                            style: const pw.TextStyle(
+                                fontSize: 8.5,
+                                color: PdfColors.grey800),
+                            children: [
+                              const pw.TextSpan(
+                                  text:
+                                      'For any issues or questions, please visit '),
+                              pw.TextSpan(
+                                text: AppConstants.supportUrlDisplay,
+                                style: pw.TextStyle(
+                                  color: PdfColors.blue,
+                                  fontWeight: pw.FontWeight.bold,
+                                  decoration: pw.TextDecoration.underline,
+                                ),
+                              ),
+                              const pw.TextSpan(text: '.'),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -534,12 +536,12 @@ class ReceiptPdfService {
                   width: double.infinity,
                   padding: const pw.EdgeInsets.all(10),
                   decoration: pw.BoxDecoration(
-                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                    border: pw.Border.all(color: PdfColors.grey400, width: 1.0),
                   ),
                   child: pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
-                      pw.Text('Notes', style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+                      pw.Text('Notes', style: pw.TextStyle(fontSize: 9.5, fontWeight: pw.FontWeight.bold)),
                       pw.SizedBox(height: 6),
                       _pdfNoteItem('1.', 'At check-in, you must present a valid photo ID with your address confirming the same name as the lead guest on the booking. For bookings paid with a credit card, you may also need to present the card used to make the payment. Failure to do so may result in the hotel requesting additional payment or your reservation not being honored.', isImportant: true),
                       pw.SizedBox(height: 5),
@@ -559,19 +561,19 @@ class ReceiptPdfService {
                   padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   decoration: pw.BoxDecoration(
                     color: PdfColors.grey200,
-                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                    border: pw.Border.all(color: PdfColors.grey400, width: 1.0),
                   ),
                   child: pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
                       pw.Text(
                         'Thank you for choosing FastNetStays.com!',
-                        style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
+                        style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: PdfColors.black),
                       ),
                       pw.SizedBox(height: 2),
                       pw.Text(
                         'We wish you a pleasant and comfortable stay.',
-                        style: const pw.TextStyle(fontSize: 7, color: PdfColors.grey800),
+                        style: const pw.TextStyle(fontSize: 8.5, color: PdfColors.grey800),
                       ),
                     ],
                   ),

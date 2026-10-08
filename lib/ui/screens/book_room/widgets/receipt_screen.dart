@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:fastnet_mobile_front_end/config/constants.dart';
 import 'package:fastnet_mobile_front_end/services/receipt_pdf_service.dart';
 
 class ReceiptScreen extends StatelessWidget {
@@ -37,6 +39,31 @@ class ReceiptScreen extends StatelessWidget {
 
   String _formatPrice(int price) {
     return ReceiptPdfService.formatPrice(price);
+  }
+
+  /// Opens the real web support page in the external browser, with an
+  /// offline/unsupported fallback that still shows the address.
+  ///
+  /// Uses [launchUrl]'s own result instead of gating on [canLaunchUrl]:
+  /// on Android 11+ package-visibility rules make `canLaunchUrl` return
+  /// false for https even when a browser would open fine (hence the
+  /// previous "could not open" dead-end). The manifest `<queries>` block
+  /// covers the check anyway; this stays correct with or without it.
+  Future<void> _openSupport(BuildContext context) async {
+    final uri = Uri.parse(AppConstants.supportUrl);
+    bool opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      opened = false;
+    }
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Could not open support page. Please visit ${AppConstants.supportUrlDisplay}.')),
+      );
+    }
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -131,10 +158,10 @@ class ReceiptScreen extends StatelessWidget {
           children: [
             // Outer Border Container Box (Exact match to reference image)
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: Colors.white,
-                border: Border.all(color: Colors.black87, width: 1.2),
+                border: Border.all(color: Colors.black, width: 2.5),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.05),
@@ -151,53 +178,26 @@ class ReceiptScreen extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          RichText(
-                            text: const TextSpan(
-                              children: [
-                                TextSpan(
-                                  text: 'FASTNET',
-                                  style: TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w900,
-                                    color: Color(0xFF003087),
-                                    letterSpacing: 0.8,
-                                    decoration: TextDecoration.underline,
-                                    decorationColor: Color(0xFF003087),
-                                    decorationThickness: 2,
-                                  ),
-                                ),
-                                TextSpan(
-                                  text: 'STAYS',
-                                  style: TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w900,
-                                    color: Color(0xFFD9251D),
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                                TextSpan(
-                                  text: '.com',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ],
-                            ),
+                          Image.asset(
+                            'assets/images/fastnet_logo_icon.png',
+                            height: 28,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const Icon(
+                                Icons.bolt_rounded,
+                                color: Color(0xFF1A73E8),
+                                size: 26),
                           ),
-                          const SizedBox(height: 3),
-                          Row(
-                            children: [
-                              _uiDot(Colors.red),
-                              _uiDot(Colors.orange),
-                              _uiDot(Colors.amber),
-                              _uiDot(Colors.green),
-                              _uiDot(Colors.blue),
-                            ],
+                          const SizedBox(width: 8),
+                          const Text(
+                            'fastnetstays.com',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF202124),
+                              fontSize: 17,
+                            ),
                           ),
                         ],
                       ),
@@ -208,8 +208,8 @@ class ReceiptScreen extends StatelessWidget {
                             RichText(
                               text: const TextSpan(
                                 children: [
-                                  TextSpan(text: 'Booking ', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black)),
-                                  TextSpan(text: 'Confirmation', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFFD9251D))),
+                                  TextSpan(text: 'Booking ', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900, color: Colors.black)),
+                                  TextSpan(text: 'Confirmation', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900, color: Color(0xFFD9251D))),
                                 ],
                               ),
                             ),
@@ -217,7 +217,7 @@ class ReceiptScreen extends StatelessWidget {
                             const Text(
                               'Please present either an electronic or paper copy of your booking confirmation upon check-in.',
                               textAlign: TextAlign.end,
-                              style: TextStyle(fontSize: 8, color: Colors.black87),
+                              style: TextStyle(fontSize: 8.5, color: Colors.black87),
                             ),
                           ],
                         ),
@@ -233,7 +233,7 @@ class ReceiptScreen extends StatelessWidget {
                     color: Colors.grey.shade400,
                     child: const Text(
                       'fastnetstays.com    fastnetstays.com    fastnetstays.com    fastnetstays.com    fastnetstays.com',
-                      style: TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.bold),
+                      style: TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -260,16 +260,16 @@ class ReceiptScreen extends StatelessWidget {
                               children: [
                                 const SizedBox(
                                   width: 120,
-                                  child: Text('Property :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                  child: Text('Property :', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.black)),
                                 ),
                                 Expanded(
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                                     decoration: BoxDecoration(
-                                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                                      border: Border.all(color: Colors.grey.shade400, width: 1.0),
                                       color: Colors.white,
                                     ),
-                                    child: Text(lodgeName, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                    child: Text(lodgeName, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
                                   ),
                                 ),
                               ],
@@ -280,16 +280,16 @@ class ReceiptScreen extends StatelessWidget {
                               children: [
                                 const SizedBox(
                                   width: 120,
-                                  child: Text('Room Assigned :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                  child: Text('Room Assigned :', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.black)),
                                 ),
                                 Expanded(
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                                     decoration: BoxDecoration(
-                                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                                      border: Border.all(color: Colors.grey.shade400, width: 1.0),
                                       color: Colors.white,
                                     ),
-                                    child: Text('Room $roomNumber', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                    child: Text('Room $roomNumber', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
                                   ),
                                 ),
                               ],
@@ -300,16 +300,16 @@ class ReceiptScreen extends StatelessWidget {
                               children: [
                                 const SizedBox(
                                   width: 120,
-                                  child: Text('Address :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black87)),
+                                  child: Text('Address :', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.black)),
                                 ),
                                 Expanded(
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                                     decoration: BoxDecoration(
-                                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                                      border: Border.all(color: Colors.grey.shade400, width: 1.0),
                                       color: Colors.white,
                                     ),
-                                    child: Text('$location, Tanzania', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                    child: Text('$location, Tanzania', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
                                   ),
                                 ),
                               ],
@@ -338,7 +338,7 @@ class ReceiptScreen extends StatelessWidget {
                               const SizedBox(height: 4),
                               const Text(
                                 'For Full Promotion details and conditions see confirmation email',
-                                style: TextStyle(fontSize: 7.5, color: Colors.black87),
+                                style: TextStyle(fontSize: 8.5, color: Colors.black87),
                               ),
                             ],
                           ),
@@ -355,7 +355,7 @@ class ReceiptScreen extends StatelessWidget {
                     color: const Color(0xFFEFEFEF),
                     child: RichText(
                       text: const TextSpan(
-                        style: TextStyle(fontSize: 8.5, color: Colors.black87, height: 1.3),
+                        style: TextStyle(fontSize: 9.5, color: Colors.black87, height: 1.3),
                         children: [
                           TextSpan(text: 'Cancellation Policy: ', style: TextStyle(fontWeight: FontWeight.bold)),
                           TextSpan(
@@ -383,7 +383,7 @@ class ReceiptScreen extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                      border: Border.all(color: Colors.grey.shade400, width: 1.0),
                     ),
                     child: Column(
                       children: [
@@ -393,13 +393,13 @@ class ReceiptScreen extends StatelessWidget {
                             Expanded(
                               child: Row(
                                 children: [
-                                  const Text('Arrival :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                  const Text('Arrival :', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                                       color: const Color(0xFFD9D9D9),
-                                      child: Text(arrivalDate, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                                      child: Text(arrivalDate, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900), textAlign: TextAlign.center),
                                     ),
                                   ),
                                 ],
@@ -409,13 +409,13 @@ class ReceiptScreen extends StatelessWidget {
                             Expanded(
                               child: Row(
                                 children: [
-                                  const Text('Departure :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                  const Text('Departure :', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
                                       color: const Color(0xFFD9D9D9),
-                                      child: Text(departureDate, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                                      child: Text(departureDate, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900), textAlign: TextAlign.center),
                                     ),
                                   ),
                                 ],
@@ -434,7 +434,7 @@ class ReceiptScreen extends StatelessWidget {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text('Payment Details :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                  const Text('Payment Details :', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
                                   const SizedBox(height: 4),
                                   Container(
                                     width: double.infinity,
@@ -445,7 +445,7 @@ class ReceiptScreen extends StatelessWidget {
                                       children: [
                                         RichText(
                                           text: const TextSpan(
-                                            style: TextStyle(fontSize: 8, height: 1.3),
+                                            style: TextStyle(fontSize: 9, height: 1.3),
                                             children: [
                                               TextSpan(text: 'Please note: ', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFD9251D))),
                                               TextSpan(text: 'Payment for this booking has been processed via FastNetStays. Payment confirmation is verified by property.', style: TextStyle(color: Colors.black87)),
@@ -476,7 +476,7 @@ class ReceiptScreen extends StatelessWidget {
                               child: Container(
                                 padding: const EdgeInsets.all(4),
                                 decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                                  border: Border.all(color: Colors.grey.shade400, width: 1.0),
                                   color: Colors.white,
                                 ),
                                 child: Column(
@@ -498,7 +498,7 @@ class ReceiptScreen extends StatelessWidget {
                                     const SizedBox(height: 3),
                                     const Text(
                                       'Authorized Stamp & Signature',
-                                      style: TextStyle(fontSize: 7.5, fontWeight: FontWeight.bold, color: Colors.black87),
+                                      style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.black87),
                                       textAlign: TextAlign.center,
                                     ),
                                   ],
@@ -513,24 +513,40 @@ class ReceiptScreen extends StatelessWidget {
                   const SizedBox(height: 10),
 
                   // 6. Remarks
-                  const Text('Remarks :', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
-                  Text('Included : Taxes and fees ${_formatPrice(vatTotal)}', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold)),
-                  const Text('NonSmoke', style: TextStyle(fontSize: 8.5)),
-                  const Row(
+                  const Text('Remarks :', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
+                  Text('Included : Taxes and fees ${_formatPrice(vatTotal)}', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900)),
+                  const Text('NonSmoke', style: TextStyle(fontSize: 9.5)),
+                  Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(
+                      const Expanded(
                         child: Text(
                           'All special requests are subject to availability upon arrival',
-                          style: TextStyle(fontSize: 8),
+                          style: TextStyle(fontSize: 9),
                         ),
                       ),
-                      SizedBox(width: 8),
+                      const SizedBox(width: 8),
                       Expanded(
-                        child: Text(
-                          'For any issues or questions, please visit www.fastnetstays.com/support.',
-                          textAlign: TextAlign.end,
-                          style: TextStyle(fontSize: 8, color: Colors.black87),
+                        child: GestureDetector(
+                          onTap: () => _openSupport(context),
+                          child: Text.rich(
+                            const TextSpan(
+                              style: TextStyle(fontSize: 9, color: Colors.black87, height: 1.35),
+                              children: [
+                                TextSpan(text: 'For any issues or questions, please visit '),
+                                TextSpan(
+                                  text: AppConstants.supportUrlDisplay,
+                                  style: TextStyle(
+                                    color: Color(0xFF1A73E8),
+                                    fontWeight: FontWeight.bold,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                                TextSpan(text: '.'),
+                              ],
+                            ),
+                            textAlign: TextAlign.end,
+                          ),
                         ),
                       ),
                     ],
@@ -542,13 +558,13 @@ class ReceiptScreen extends StatelessWidget {
                     width: double.infinity,
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                      border: Border.all(color: Colors.grey.shade400, width: 1.0),
                       color: const Color(0xFFFDFDFD),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Notes', style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.black87)),
+                        const Text('Notes', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: Colors.black)),
                         const SizedBox(height: 6),
                         _uiNoteItem('1.', 'At check-in, you must present a valid photo ID with your address confirming the same name as the lead guest on the booking. For bookings paid with a credit card, you may also need to present the card used to make the payment. Failure to do so may result in the hotel requesting additional payment or your reservation not being honored.', isImportant: true),
                         const SizedBox(height: 5),
@@ -568,19 +584,19 @@ class ReceiptScreen extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                     decoration: BoxDecoration(
                       color: const Color(0xFFEFEFEF),
-                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                      border: Border.all(color: Colors.grey.shade400, width: 1.0),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
                           'Thank you for choosing FastNetStays.com!',
-                          style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.black87),
+                      style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: Colors.black),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           'We wish you a pleasant and comfortable stay.',
-                          style: TextStyle(fontSize: 7.5, color: Colors.grey.shade800),
+                          style: TextStyle(fontSize: 8.5, color: Colors.grey.shade800),
                         ),
                       ],
                     ),
@@ -595,15 +611,6 @@ class ReceiptScreen extends StatelessWidget {
     );
   }
 
-  Widget _uiDot(Color color) {
-    return Container(
-      width: 7.5,
-      height: 7.5,
-      margin: const EdgeInsets.only(right: 4.5),
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-    );
-  }
-
   Widget _uiDetailRow(String label, String value, {bool isBold = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -612,12 +619,12 @@ class ReceiptScreen extends StatelessWidget {
         children: [
           SizedBox(
             width: 120,
-            child: Text(label, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black87)),
+            child: Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: Colors.black)),
           ),
           Expanded(
             child: Text(
               value,
-              style: TextStyle(fontSize: 9, fontWeight: isBold ? FontWeight.bold : FontWeight.normal, color: Colors.black87),
+              style: TextStyle(fontSize: 10, fontWeight: isBold ? FontWeight.w900 : FontWeight.normal, color: Colors.black87),
             ),
           ),
         ],
@@ -632,18 +639,18 @@ class ReceiptScreen extends StatelessWidget {
         children: [
           SizedBox(
             width: 95,
-            child: Text(label, style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Colors.black87)),
+            child: Text(label, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: Colors.black)),
           ),
           Expanded(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
               decoration: BoxDecoration(
                 color: Colors.white,
-                border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                border: Border.all(color: Colors.grey.shade400, width: 1.0),
               ),
               child: Text(
                 value,
-                style: TextStyle(fontSize: 8.5, fontWeight: isBold ? FontWeight.bold : FontWeight.normal),
+                style: TextStyle(fontSize: 9.5, fontWeight: isBold ? FontWeight.w900 : FontWeight.normal),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -659,13 +666,13 @@ class ReceiptScreen extends StatelessWidget {
       children: [
         SizedBox(
           width: 16,
-          child: Text(number, style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.bold, color: Colors.black87)),
+          child: Text(number, style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w900, color: Colors.black)),
         ),
         Expanded(
           child: isImportant
               ? RichText(
                   text: TextSpan(
-                    style: const TextStyle(fontSize: 7.5, color: Colors.black87, height: 1.35),
+                    style: const TextStyle(fontSize: 8.5, color: Colors.black87, height: 1.35),
                     children: [
                       const TextSpan(text: 'IMPORTANT: ', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFD9251D))),
                       TextSpan(text: text),

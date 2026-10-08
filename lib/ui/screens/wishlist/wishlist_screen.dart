@@ -4,6 +4,7 @@ import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 import 'package:fastnet_mobile_front_end/providers/wishlist_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/property_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:fastnet_mobile_front_end/models/app_settings.dart';
 import 'package:fastnet_mobile_front_end/ui/widgets/web_header.dart';
@@ -18,6 +19,15 @@ class WishlistScreen extends StatefulWidget {
 
 class _WishlistScreenState extends State<WishlistScreen> {
   int _selectedGroupIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Live sync with web `/my-wishlists`: same backend rows.
+    Future.microtask(() {
+      if (mounted) context.read<WishlistProvider>().syncFromApi();
+    });
+  }
 
   String _formatPrice(int price) {
     return 'TSh ${price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}';
@@ -325,8 +335,8 @@ class _WishlistScreenState extends State<WishlistScreen> {
               children: [
                 ClipRRect(
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                  child: Image.asset(
-                    item.imageUrl,
+                  child: PropertyImage(
+                    url: item.imageUrl,
                     height: 120,
                     width: double.infinity,
                     fit: BoxFit.cover,
@@ -595,7 +605,7 @@ class _WishlistScreenState extends State<WishlistScreen> {
                                       children: [
                                         ClipRRect(
                                           borderRadius: const BorderRadius.only(topLeft: Radius.circular(8), bottomLeft: Radius.circular(8)),
-                                          child: Image.asset(item.imageUrl, width: 140, height: double.infinity, fit: BoxFit.cover),
+                                          child: PropertyImage(url: item.imageUrl, width: 140, height: double.infinity, fit: BoxFit.cover),
                                         ),
                                         Expanded(
                                           child: Padding(

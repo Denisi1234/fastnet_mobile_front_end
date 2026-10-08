@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:fastnet_mobile_front_end/services/api_service.dart';
 
@@ -33,30 +35,47 @@ class NotificationsScreen extends StatefulWidget {
 class _NotificationsScreenState extends State<NotificationsScreen> {
   List<AppNotification> _notifications = [];
   bool _isLoading = true;
+  Timer? _pollTimer;
 
   @override
   void initState() {
     super.initState();
     _fetchNotifications();
+    // Live sync with web: same backend rows. Poll while visible so a
+    // booking/payment event on web appears here within ~30s.
+    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) _silentRefresh();
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _silentRefresh() async {
+    try {
+      final data = await ApiService.fetchNotifications();
+      if (!mounted) return;
+      setState(() {
+        _notifications = data.map((n) => AppNotification(
+          id: (n['id'] is num) ? (n['id'] as num).toInt() : int.tryParse('${n['id']}') ?? 0,
+          type: (n['type'] ?? 'info').toString(),
+          title: (n['title'] ?? 'Notification').toString(),
+          body: (n['message'] ?? n['body'] ?? '').toString(),
+          createdAt: n['created_at'] != null ? DateTime.parse(n['created_at']).toLocal() : DateTime.now(),
+          isRead: (n['is_read'] ?? n['read'] ?? false) == true,
+        )).toList();
+        _notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      });
+    } catch (_) {}
   }
 
   Future<void> _fetchNotifications() async {
     setState(() => _isLoading = true);
-    final data = await ApiService.fetchNotifications();
-    if (mounted) {
-      setState(() {
-        _notifications = data.map((n) => AppNotification(
-          id: n['id'] ?? 0,
-          type: n['type'] ?? 'info',
-          title: n['title'] ?? 'Notification',
-          body: n['message'] ?? n['body'] ?? '',
-          createdAt: n['created_at'] != null ? DateTime.parse(n['created_at']).toLocal() : DateTime.now(),
-          isRead: n['is_read'] ?? n['read'] ?? false,
-        )).toList();
-        _notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        _isLoading = false;
-      });
-    }
+    await _silentRefresh();
+    if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _markAsRead(AppNotification n) async {
@@ -349,7 +368,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           Expanded(
             child: !hasAny
                 ? _emptyState()
-                : ListView(
+                : RefreshIndicator(
+                    onRefresh: _fetchNotifications,
+                    child: ListView(
                     padding: const EdgeInsets.only(top: 4, bottom: 40),
                     children: [
                       // Unread section
@@ -365,6 +386,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       ],
                     ],
                   ),
+          ),
           ),
         ],
       ),

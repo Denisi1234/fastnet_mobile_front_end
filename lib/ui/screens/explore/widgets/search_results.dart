@@ -11,6 +11,7 @@ import 'filter_bottom_sheet.dart';
 import 'package:fastnet_mobile_front_end/ui/widgets/interactive_card.dart';
 import 'package:fastnet_mobile_front_end/ui/widgets/fade_slide_page_route.dart';
 import 'package:fastnet_mobile_front_end/ui/widgets/shimmer_widget.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/property_image.dart';
 
 class SearchResultsScreen extends StatefulWidget {
   final String searchQuery;
@@ -20,6 +21,10 @@ class SearchResultsScreen extends StatefulWidget {
   final String selectedDatesText;
   final int numNights;
 
+  /// Web parity: home (`Explore`) opens this screen straight into the map
+  /// pane via its Map FAB (web desktop shows list + map side by side).
+  final bool initialMapView;
+
   const SearchResultsScreen({
     Key? key,
     required this.searchQuery,
@@ -28,6 +33,7 @@ class SearchResultsScreen extends StatefulWidget {
     required this.filteredDestinations,
     required this.selectedDatesText,
     required this.numNights,
+    this.initialMapView = false,
   }) : super(key: key);
 
   @override
@@ -214,6 +220,7 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
   @override
   void initState() {
     super.initState();
+    _isMapView = widget.initialMapView;
     _scrollController = ScrollController();
     _scrollController.addListener(_onScroll);
     _pageController = PageController(viewportFraction: 0.88, initialPage: _selectedMapLodgeIndex);
@@ -508,8 +515,8 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                       children: [
                         ClipRRect(
                           borderRadius: const BorderRadius.horizontal(left: Radius.circular(16)),
-                          child: Image.asset(
-                            lodge.imageUrl,
+                          child: PropertyImage(
+                            url: lodge.imageUrl,
                             width: 120,
                             height: double.infinity,
                             fit: BoxFit.cover,
@@ -1258,8 +1265,8 @@ class _CardImageCarouselState extends State<CardImageCarousel> {
             });
           },
           itemBuilder: (context, index) {
-            return Image.asset(
-              widget.imageUrls[index],
+            return PropertyImage(
+              url: widget.imageUrls[index],
               width: widget.width,
               height: double.infinity,
               fit: BoxFit.cover,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/property_image.dart';
 import 'package:fastnet_mobile_front_end/models/destination.dart';
 import 'add_property.dart';
 import 'calendar_pricing_editor.dart';
@@ -176,16 +177,11 @@ class _ManageListingsState extends State<ManageListings> {
                     children: [
                       ClipRRect(
                         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                        child: Image.asset(
-                          prop.imageUrl,
+                        child: PropertyImage(
+                          url: prop.imageUrl,
                           height: 180,
                           width: double.infinity,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => Container(
-                            height: 180,
-                            color: Colors.grey.shade300,
-                            child: const Icon(Icons.image, size: 50, color: Colors.grey),
-                          ),
                         ),
                       ),
                       Padding(

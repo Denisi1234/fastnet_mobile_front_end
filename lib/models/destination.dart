@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:fastnet_mobile_front_end/services/api_service.dart';
 
 class Destination {
@@ -22,6 +25,19 @@ class Destination {
   final int? id;
   final List<Map<String, dynamic>>? rooms;
 
+  /// Web parity (`gh-cards-list.php`): property type label, star rating,
+  /// review count and free-cancellation flag drive the card + filter chips.
+  final String propertyType;
+  final int starRating;
+  final int reviewCount;
+  final bool freeCancellation;
+
+  /// Web parity (`hotel-detail-modals.php` "Good to know"): shown only when
+  /// the backend provides them — never invented.
+  final String checkInTime;
+  final String checkOutTime;
+  final String cancellationPolicy;
+
   Destination({
     required this.imageUrl,
     required this.name,
@@ -42,46 +58,101 @@ class Destination {
     required this.longitude,
     this.id,
     this.rooms,
+    this.propertyType = '',
+    this.starRating = 0,
+    this.reviewCount = 0,
+    this.freeCancellation = false,
+    this.checkInTime = '',
+    this.checkOutTime = '',
+    this.cancellationPolicy = '',
   });
 
+  static double _num(dynamic v, double fallback) {
+    if (v == null) return fallback;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? fallback;
+  }
+
+  static int _price(dynamic v, int fallback) {
+    if (v == null) return fallback;
+    if (v is num) return v.toInt();
+    return double.tryParse(v.toString())?.toInt() ?? fallback;
+  }
+
+  static bool _bool(dynamic v) {
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final s = v?.toString().toLowerCase().trim() ?? '';
+    return s == '1' || s == 'true' || s == 'yes';
+  }
+
+  static List<String> _amenities(dynamic v) {
+    if (v is List) return v.map((e) => e.toString()).toList();
+    if (v is String && v.isNotEmpty) {
+      try {
+        final d = jsonDecode(v);
+        if (d is List) return d.map((e) => e.toString()).toList();
+      } catch (_) {}
+      return v.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    }
+    return ['Wi-Fi', 'Air conditioning', 'Parking'];
+  }
+
+  /// Parses a real backend property row (Property + rooms + reviews aggregates).
+  /// Mirrors web `StaysDetailTrait`: numeric strings accepted, null image →
+  /// caller shows asset placeholder, never a fake listing.
   factory Destination.fromJson(Map<String, dynamic> json) {
     final List<Map<String, dynamic>> roomsList = [];
     if (json['rooms'] != null) {
-      for (var r in json['rooms']) {
-        roomsList.add(Map<String, dynamic>.from(r));
+      for (var r in (json['rooms'] as List)) {
+        if (r is Map) roomsList.add(Map<String, dynamic>.from(r));
       }
     }
 
-    final rawPrice = json['price_per_night'];
-    int parsedPrice = 50000;
-    if (rawPrice != null) {
-      if (rawPrice is String) {
-        parsedPrice = double.parse(rawPrice).toInt();
-      } else if (rawPrice is num) {
-        parsedPrice = rawPrice.toInt();
-      }
-    }
+    // Web rule: backend `customer_price_per_night` already includes the 1%
+    // AzamPay fee — prefer it, fall back to raw nightly fields.
+    final rawPrice = json['customer_price_per_night'] ??
+        json['price_per_night'] ??
+        json['price'];
+    final parsedPrice = _price(rawPrice, 50000);
+
+    final rating = _num(json['rating'] ?? json['reviews_avg_rating'], 4.5);
+    final img = json['primary_image_url'] ?? json['image_url'];
+    final amen = _amenities(json['amenities']);
+    final cancelRaw = json['free_cancellation'] ?? json['freeCancellation'];
+    final freeCancel = _bool(cancelRaw) ||
+        amen.any((a) => a.toLowerCase().contains('cancel'));
 
     return Destination(
-      id: json['id'],
-      imageUrl: json['image_url'] ?? 'assets/images/home.webp',
-      name: json['name'] ?? 'Lodge Stay',
-      city: json['city'] ?? 'Dar es Salaam',
-      area: json['area'] ?? 'Mikocheni',
-      roomType: 'Private Room',
-      distance: 2,
-      rating: 4.5,
+      id: (json['id'] is num) ? (json['id'] as num).toInt() : int.tryParse(json['id']?.toString() ?? ''),
+      imageUrl: (img is String && img.isNotEmpty) ? img : 'assets/images/home.webp',
+      name: json['name']?.toString() ?? 'Lodge Stay',
+      city: json['city']?.toString() ?? 'Dar es Salaam',
+      area: json['area']?.toString() ?? 'Mikocheni',
+      roomType: json['room_type']?.toString() ?? 'Private Room',
+      distance: _num(json['distance'], 2).toInt(),
+      rating: rating,
       price: parsedPrice,
-      duration: 'Available today',
-      guests: 2,
-      bedrooms: 1,
-      beds: 1,
-      baths: 1,
-      condition: json['description'] ?? '',
-      amenities: ['Wi-Fi', 'Air conditioning', 'Parking'],
-      latitude: json['latitude'] != null ? double.parse(json['latitude'].toString()) : -6.7780,
-      longitude: json['longitude'] != null ? double.parse(json['longitude'].toString()) : 39.2345,
+      duration: json['duration']?.toString() ?? 'Available today',
+      guests: _num(json['guests'] ?? json['capacity'], 2).toInt(),
+      bedrooms: _num(json['bedrooms'], 1).toInt(),
+      beds: _num(json['beds'] ?? json['number_of_beds'], 1).toInt(),
+      baths: _num(json['baths'], 1).toInt(),
+      condition: json['description']?.toString() ?? '',
+      amenities: amen,
+      latitude: _num(json['latitude'], -6.7780),
+      longitude: _num(json['longitude'], 39.2345),
       rooms: roomsList,
+      propertyType: (json['property_type'] ?? json['propertyType'] ?? '').toString(),
+      checkInTime: (json['check_in_time'] ?? json['checkInTime'] ?? '').toString(),
+      checkOutTime: (json['check_out_time'] ?? json['checkOutTime'] ?? '').toString(),
+      cancellationPolicy: (json['cancellation_policy'] ?? json['cancellationPolicy'] ?? '').toString(),
+      starRating: _num(json['star_rating'] ?? json['stars'], 0).toInt().clamp(0, 5),
+      reviewCount: _num(
+        json['reviews_count'] ?? json['review_count'] ?? json['reviewsCount'],
+        0,
+      ).toInt(),
+      freeCancellation: freeCancel,
     );
   }
 
@@ -118,6 +189,13 @@ class Destination {
       'latitude': latitude,
       'longitude': longitude,
       'rooms': rooms,
+      'property_type': propertyType,
+      'star_rating': starRating,
+      'reviews_count': reviewCount,
+      'free_cancellation': freeCancellation,
+      'check_in_time': checkInTime,
+      'check_out_time': checkOutTime,
+      'cancellation_policy': cancellationPolicy,
     };
   }
 
@@ -148,259 +226,22 @@ class Destination {
       latitude: (json['latitude'] as num?)?.toDouble() ?? -6.7780,
       longitude: (json['longitude'] as num?)?.toDouble() ?? 39.2345,
       rooms: roomsList,
+      propertyType: (json['property_type'] ?? '').toString(),
+      starRating: (json['star_rating'] as num?)?.toInt() ?? 0,
+      reviewCount: (json['reviews_count'] as num?)?.toInt() ?? 0,
+      freeCancellation: json['free_cancellation'] == true,
+      checkInTime: (json['check_in_time'] ?? '').toString(),
+      checkOutTime: (json['check_out_time'] ?? '').toString(),
+      cancellationPolicy: (json['cancellation_policy'] ?? '').toString(),
     );
   }
 }
 
-final List<Destination> destinations = [
-  Destination(
-    imageUrl: 'assets/images/home.webp',
-    name: 'Palm Garden Lodge',
-    city: 'Dar es Salaam',
-    area: 'Mikocheni',
-    roomType: 'Deluxe private room',
-    distance: 3,
-    rating: 4.87,
-    price: 85000,
-    duration: 'Available today',
-    guests: 2,
-    bedrooms: 1,
-    beds: 1,
-    baths: 1,
-    condition: 'Clean private room with air conditioning and secure parking.',
-    amenities: ['Wi-Fi', 'Air conditioning', 'Breakfast', 'Parking'],
-    latitude: -6.7780,
-    longitude: 39.2345,
-  ),
-  Destination(
-    imageUrl: 'assets/images/room.webp',
-    name: 'Sabasaba Comfort Rooms',
-    city: 'Dodoma',
-    area: 'Sabasaba',
-    roomType: 'Standard room',
-    distance: 1,
-    rating: 4.49,
-    price: 45000,
-    duration: 'Available this week',
-    guests: 2,
-    bedrooms: 1,
-    beds: 1,
-    baths: 1,
-    condition: 'Quiet room near transport, shops, and local food places.',
-    amenities: ['Wi-Fi', 'Fan', 'Private bathroom', 'Reception'],
-    latitude: -6.1664,
-    longitude: 35.7443,
-  ),
-  Destination(
-    imageUrl: 'assets/images/home2.webp',
-    name: 'Mtumba Executive Stay',
-    city: 'Dodoma',
-    area: 'Mtumba',
-    roomType: 'Executive room',
-    distance: 2,
-    rating: 4.57,
-    price: 65000,
-    duration: 'Available today',
-    guests: 2,
-    bedrooms: 1,
-    beds: 1,
-    baths: 1,
-    condition: 'Modern room close to government offices and main roads.',
-    amenities: ['Wi-Fi', 'Air conditioning', 'Workspace', 'Parking'],
-    latitude: -6.2167,
-    longitude: 35.8895,
-  ),
-  Destination(
-    imageUrl: 'assets/images/house2.webp',
-    name: 'Kisasa Family Lodge',
-    city: 'Dodoma',
-    area: 'Kisasa',
-    roomType: 'Family room',
-    distance: 4,
-    rating: 4.03,
-    price: 95000,
-    duration: 'Available tomorrow',
-    guests: 4,
-    bedrooms: 2,
-    beds: 2,
-    baths: 1,
-    condition: 'Spacious room for family stays with a calm compound.',
-    amenities: ['Wi-Fi', 'Breakfast', 'Two beds', 'Parking'],
-    latitude: -6.1552,
-    longitude: 35.7924,
-  ),
-  Destination(
-    imageUrl: 'assets/images/house3.webp',
-    name: 'Kariakoo Budget Lodge',
-    city: 'Dar es Salaam',
-    area: 'Kariakoo',
-    roomType: 'Budget room',
-    distance: 1,
-    rating: 4.35,
-    price: 35000,
-    duration: 'Few rooms left',
-    guests: 1,
-    bedrooms: 1,
-    beds: 1,
-    baths: 1,
-    condition: 'Simple affordable room close to the market and bus routes.',
-    amenities: ['Fan', 'Private bathroom', 'Reception', 'Security'],
-    latitude: -6.8182,
-    longitude: 39.2783,
-  ),
-  Destination(
-    imageUrl: 'assets/images/house4.webp',
-    name: 'Njiro Garden Rooms',
-    city: 'Arusha',
-    area: 'Njiro',
-    roomType: 'Garden room',
-    distance: 5,
-    rating: 4.90,
-    price: 70000,
-    duration: 'Available today',
-    guests: 2,
-    bedrooms: 1,
-    beds: 1,
-    baths: 1,
-    condition: 'Comfortable lodge room with garden space and mountain air.',
-    amenities: ['Wi-Fi', 'Hot shower', 'Garden', 'Breakfast'],
-    latitude: -3.4005,
-    longitude: 36.7103,
-  ),
-  Destination(
-    imageUrl: 'assets/images/home.webp',
-    name: 'Zanzibar Sunset Beach Villa',
-    city: 'Zanzibar',
-    area: 'Nungwi',
-    roomType: 'Oceanfront suite',
-    distance: 45,
-    rating: 4.92,
-    price: 185000,
-    duration: 'Available today',
-    guests: 2,
-    bedrooms: 1,
-    beds: 1,
-    baths: 1,
-    condition: 'Stunning luxury villa directly on the sands of Nungwi beach with pool access.',
-    amenities: ['Wi-Fi', 'Air conditioning', 'Pool', 'Breakfast', 'Ocean view'],
-    latitude: -5.7335,
-    longitude: 39.2974,
-  ),
-  Destination(
-    imageUrl: 'assets/images/home2.webp',
-    name: 'Arusha Safari Lodge',
-    city: 'Arusha',
-    area: 'Sakina',
-    roomType: 'Luxury chalet',
-    distance: 8,
-    rating: 4.88,
-    price: 120000,
-    duration: 'Available this week',
-    guests: 4,
-    bedrooms: 2,
-    beds: 2,
-    baths: 2,
-    condition: 'Perfect safari chalet with panoramic views of Mount Meru and cozy fireplace.',
-    amenities: ['Wi-Fi', 'Fireplace', 'Workspace', 'Breakfast', 'Scenic views'],
-    latitude: -3.3662,
-    longitude: 36.6661,
-  ),
-  Destination(
-    imageUrl: 'assets/images/house2.webp',
-    name: 'Mbezi Beach Resort Suite',
-    city: 'Dar es Salaam',
-    area: 'Mbezi Beach',
-    roomType: 'Resort apartment',
-    distance: 12,
-    rating: 4.79,
-    price: 150000,
-    duration: 'Few rooms left',
-    guests: 3,
-    bedrooms: 1,
-    beds: 2,
-    baths: 1,
-    condition: 'Elegant resort apartment steps away from Mbezi beach shores with modern kitchen.',
-    amenities: ['Wi-Fi', 'Air conditioning', 'Kitchen', 'Pool', 'Gym'],
-    latitude: -6.7192,
-    longitude: 39.2274,
-  ),
-  Destination(
-    imageUrl: 'assets/images/house3.webp',
-    name: 'Golden Crest Executive Stay',
-    city: 'Dodoma',
-    area: 'Area D',
-    roomType: 'Executive suite',
-    distance: 3,
-    rating: 4.65,
-    price: 80000,
-    duration: 'Available today',
-    guests: 2,
-    bedrooms: 1,
-    beds: 1,
-    baths: 1,
-    condition: 'Premium executive room with business desk, high-speed fiber internet, and gym access.',
-    amenities: ['Wi-Fi', 'Air conditioning', 'Workspace', 'Gym', 'Breakfast'],
-    latitude: -6.1650,
-    longitude: 35.7601,
-  ),
-  Destination(
-    imageUrl: 'assets/images/home.webp',
-    name: 'Masaki Coral Luxury Villa',
-    city: 'Dar es Salaam',
-    area: 'Masaki Peninsula',
-    roomType: 'Luxury villa',
-    distance: 2,
-    rating: 4.95,
-    price: 190000,
-    duration: 'Available today',
-    guests: 4,
-    bedrooms: 2,
-    beds: 2,
-    baths: 2,
-    condition: 'High-end villa in prestigious Masaki peninsula with private garden and ocean breeze.',
-    amenities: ['Wi-Fi', 'Air conditioning', 'Pool', 'Ocean view', 'Security'],
-    latitude: -6.7482,
-    longitude: 39.2764,
-  ),
-  Destination(
-    imageUrl: 'assets/images/home3.jpg',
-    name: 'Upanga Parkside Suites',
-    city: 'Dar es Salaam',
-    area: 'Upanga East',
-    roomType: 'Apartment suite',
-    distance: 1,
-    rating: 4.70,
-    price: 95000,
-    duration: 'Available today',
-    guests: 2,
-    bedrooms: 1,
-    beds: 1,
-    baths: 1,
-    condition: 'Cozy modern apartment near city center, hospital, and peace park.',
-    amenities: ['Wi-Fi', 'Air conditioning', 'Elevator', 'Workspace'],
-    latitude: -6.8052,
-    longitude: 39.2811,
-  ),
-  Destination(
-    imageUrl: 'assets/images/house.jpeg',
-    name: 'Slipway Waterfront Haven',
-    city: 'Dar es Salaam',
-    area: 'Msasani',
-    roomType: 'Waterfront suite',
-    distance: 3,
-    rating: 4.88,
-    price: 160000,
-    duration: 'Available today',
-    guests: 2,
-    bedrooms: 1,
-    beds: 1,
-    baths: 1,
-    condition: 'Exclusive stay steps away from Slipway shopping, restaurants, and boat trips.',
-    amenities: ['Wi-Fi', 'Sea view', 'Restaurant', 'Cocktail lounge'],
-    latitude: -6.7530,
-    longitude: 39.2740,
-  ),
-];
+/// Live cache of backend property rows — same source as web.
+/// Starts empty (web rule: empty backend = empty page, never mocks) and is
+/// filled by [loadDestinationsFromApi]. Screens must handle empty with an
+/// empty-state + retry, not fake listings.
+final List<Destination> destinations = [];
 
 Future<void> loadDestinationsFromApi({String? city, double? priceMax}) async {
   try {
@@ -410,6 +251,6 @@ Future<void> loadDestinationsFromApi({String? city, double? priceMax}) async {
       destinations.addAll(properties.map((p) => Destination.fromJson(Map<String, dynamic>.from(p))));
     }
   } catch (e) {
-    print('Failed to load destinations: $e');
+    debugPrint('Failed to load destinations: $e');
   }
 }

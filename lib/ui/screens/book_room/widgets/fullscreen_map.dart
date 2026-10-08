@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 import 'package:flutter/services.dart' show ByteData, Uint8List;
 import 'package:flutter/material.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/property_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' hide Size;
 import 'package:fastnet_mobile_front_end/config/constants.dart';
@@ -211,17 +212,11 @@ class _FullscreenMapScreenState extends State<FullscreenMapScreen> {
                   // Image
                   ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: Image.asset(
-                      widget.destination.imageUrl,
+                    child: PropertyImage(
+                      url: widget.destination.imageUrl,
                       width: 80,
                       height: 80,
                       fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        width: 80,
-                        height: 80,
-                        color: Colors.grey.shade100,
-                        child: const Icon(Icons.image_outlined, color: Colors.grey),
-                      ),
                     ),
                   ),
                   const SizedBox(width: 12),

@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/property_image.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 import 'package:fastnet_mobile_front_end/services/api_service.dart';
 
@@ -13,6 +16,7 @@ class _MyTripsScreenState extends State<MyTripsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   bool _isRefreshing = false;
+  Timer? _pollTimer;
 
   // Statuses considered "upcoming"
   static const _upcomingStatuses = {'Confirmed', 'Checked In'};
@@ -21,10 +25,19 @@ class _MyTripsScreenState extends State<MyTripsScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _onRefresh();
+    // Live sync with web `/my-booking`: same backend rows, refreshed while
+    // the screen is visible.
+    _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+      if (!mounted || _isRefreshing) return;
+      await BookingsData.syncFromApi();
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -125,17 +138,12 @@ class _MyTripsScreenState extends State<MyTripsScreen>
                 ClipRRect(
                   borderRadius:
                       const BorderRadius.vertical(top: Radius.circular(20)),
-                  child: Image.asset(
-                    b['imageUrl'] ?? 'assets/images/house3.webp',
+                  child: PropertyImage(
+                    url: (b['imageUrl'] ?? 'assets/images/house3.webp')
+                        .toString(),
                     height: 160,
                     width: double.infinity,
                     fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      height: 160,
-                      color: Colors.grey.shade200,
-                      child: Icon(Icons.image_not_supported,
-                          color: Colors.grey.shade400, size: 48),
-                    ),
                   ),
                 ),
                 // Dark gradient overlay at bottom of image
@@ -399,16 +407,13 @@ class _MyTripsScreenState extends State<MyTripsScreen>
                           // Lodge image
                           ClipRRect(
                             borderRadius: BorderRadius.circular(16),
-                            child: Image.asset(
-                              b['imageUrl'] ??
-                                  'assets/images/house3.webp',
+                            child: PropertyImage(
+                              url: (b['imageUrl'] ??
+                                      'assets/images/house3.webp')
+                                  .toString(),
                               height: 180,
                               width: double.infinity,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                height: 180,
-                                color: Colors.grey.shade100,
-                              ),
                             ),
                           ),
                           const SizedBox(height: 20),

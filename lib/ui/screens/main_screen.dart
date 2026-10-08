@@ -1,25 +1,13 @@
 import 'package:fastnet_mobile_front_end/ui/screens/explore/explore.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/host/host_dashboard.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/auth/login_signup_screen.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/auth/host_onboarding_screen.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/wishlist/wishlist_screen.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/lodge_services/lodge_services_screen.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/support/support_help_screen.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/receipt_screen.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/booking_checkout.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/profile/settings_screen.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/profile/guest_messages.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/profile/bookings_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/booking_checkout.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/profile/guest_messages.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/profile/profile_tab.dart';
 import 'package:fastnet_mobile_front_end/models/destination.dart';
 import 'package:fastnet_mobile_front_end/models/app_settings.dart';
-import 'package:fastnet_mobile_front_end/providers/bookings_provider.dart';
 import 'package:fastnet_mobile_front_end/services/draft_booking_service.dart';
-import 'package:fastnet_mobile_front_end/ui/widgets/web_header.dart';
 import 'package:flutter/foundation.dart';
-import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
-import 'package:fastnet_mobile_front_end/providers/user_session_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class MainScreen extends StatefulWidget {
@@ -279,7 +267,7 @@ class _MainScreenState extends State<MainScreen> {
 
     final List<Widget> screens = [
       const Explore(),
-      WishlistScreen(key: ValueKey('wish:${WishlistData.list.map((d) => d.name).join(',')}|view:${RecentlyViewedData.list.map((d) => d.name).join(',')}')),
+      const BookingsScreen(),
       const GuestMessagesScreen(),
       const ProfileScreen(),
     ];
@@ -326,9 +314,9 @@ class BubbleBottomNavBar extends StatelessWidget {
         label: 'Home',
       ),
       _BubbleNavItem(
-        outlineIcon: Icons.favorite_outline_rounded,
-        activeIcon: Icons.favorite_rounded,
-        label: 'Wishlist',
+        outlineIcon: Icons.event_outlined,
+        activeIcon: Icons.event,
+        label: 'Booking',
       ),
       _BubbleNavItem(
         outlineIcon: Icons.chat_bubble_outline_rounded,
@@ -546,254 +534,4 @@ class _BubbleNavItem {
     required this.label,
     this.hasNotification = false,
   });
-}
-
-// ------------------------------------
-// 1. SEARCH LIST SCREEN TAB
-// ------------------------------------
-
-// BookingsScreen is now imported from profile/bookings_screen.dart
-
-// ------------------------------------
-// 3. PROFILE SCREEN TAB
-// ------------------------------------
-class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({Key? key}) : super(key: key);
-
-  @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
-}
-
-class _ProfileScreenState extends State<ProfileScreen> {
-  @override
-  Widget build(BuildContext context) {
-    final session = context.watch<UserSessionProvider>();
-    final bool loggedIn = session.isLoggedIn;
-    return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0.5,
-        title: const Text(
-          'Profile',
-          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-        ),
-      ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            const SizedBox(height: 24),
-            if (loggedIn)
-              Center(
-                child: Column(
-                  children: [
-                    CircleAvatar(
-                      radius: 50,
-                      backgroundImage: session.profileImage,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      session.userName ?? 'Guest User',
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      session.userEmail ?? '',
-                      style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                    ),
-                    const SizedBox(height: 4),
-                  ],
-                ),
-              )
-            else
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                child: Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade200),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.03),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      )
-                    ],
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Your profile',
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Log in to start planning your next trip, booking lodges, and listing properties.',
-                        style: TextStyle(color: Colors.grey.shade600, fontSize: 14, height: 1.4),
-                      ),
-                      const SizedBox(height: 20),
-                      Container(
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [Colors.pink.shade700, Colors.red.shade900],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: ElevatedButton(
-                          onPressed: () async {
-                            final success = await Navigator.push<bool>(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const LoginSignupScreen(),
-                              ),
-                            );
-                            if (success == true) {
-                              setState(() {});
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                          child: const Text(
-                            'Log in or Sign up',
-                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            const SizedBox(height: 30),
-
-            _buildProfileSection('Hosting & Booking', [
-              _buildProfileTile(Icons.bookmark_outline, 'My Bookings', () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const BookingsScreen()));
-              }),
-              _buildProfileTile(Icons.room_service_outlined, 'Lodge Services', () {
-                final hasActiveStay = BookingsData.list.any((b) => b['status'] == 'Checked In');
-                if (hasActiveStay) {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const LodgeServicesDashboard()),
-                  );
-                } else {
-                  showDialog(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      title: const Row(
-                        children: [
-                          Icon(Icons.info_outline, color: Colors.red),
-                          SizedBox(width: 8),
-                          Text('Services Unavailable'),
-                        ],
-                      ),
-                      content: const Text(
-                        'Lodge services become available once you have checked into your room.\n\nYou can manage and check in to your bookings in the "My Bookings" section.',
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-                        ),
-                        ElevatedButton(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const BookingsScreen()),
-                            );
-                          },
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900),
-                          child: const Text('Go to Bookings', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-              }),
-              _buildProfileTile(Icons.home_work_outlined, 'List your lodge', () {
-                if (session.isLoggedIn && session.hasSeenHostOnboarding) {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const HostDashboard()));
-                } else {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const HostOnboardingScreen()));
-                }
-              }),
-            ]),
-            const SizedBox(height: 20),
-            _buildProfileSection('Settings & Support', [
-              _buildProfileTile(Icons.settings_outlined, 'Settings', () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
-              }),
-              _buildProfileTile(Icons.headset_mic_outlined, 'Lodge Support & Help', () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const SupportHelpScreen()));
-              }),
-            ]),
-            const SizedBox(height: 30),
-            if (loggedIn)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Provider.of<UserSessionProvider>(context, listen: false).logout();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Logged out successfully.')),
-                      );
-                    },
-                    icon: const Icon(Icons.logout, color: Colors.red),
-                    label: const Text('Log Out', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.red),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                ),
-              ),
-            const SizedBox(height: 40),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileSection(String title, List<Widget> children) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8),
-          child: Text(
-            title,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
-          ),
-        ),
-        Container(
-          color: Colors.white,
-          child: Column(children: children),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildProfileTile(IconData icon, String label, VoidCallback? onTap) {
-    return ListTile(
-      leading: Icon(icon, color: Colors.black87),
-      title: Text(label, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15)),
-      trailing: const Icon(Icons.arrow_forward_ios, size: 14),
-      onTap: onTap ?? () {},
-    );
-  }
 }

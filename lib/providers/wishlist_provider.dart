@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/services/api_service.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 
 class WishlistGroup {
@@ -34,7 +35,10 @@ class WishlistProvider extends ChangeNotifier {
     final defaultGroup = _groups[0];
     bool found = false;
     for (int i = 0; i < defaultGroup.items.length; i++) {
-      if (defaultGroup.items[i].name == destination.name) {
+      final same = destination.id != null
+          ? defaultGroup.items[i].id == destination.id
+          : defaultGroup.items[i].name == destination.name;
+      if (same) {
         defaultGroup.items.removeAt(i);
         found = true;
         break;
@@ -43,7 +47,41 @@ class WishlistProvider extends ChangeNotifier {
     if (!found) {
       defaultGroup.items.add(destination);
     }
+    WishlistData.save();
     notifyListeners();
+    // Mirror to the backend so web `/my-wishlists` shows the same set.
+    if (destination.id != null) {
+      if (found) {
+        ApiService.removeWishlist(destination.id!);
+      } else {
+        ApiService.addWishlist(destination.id!);
+      }
+    }
+  }
+
+  /// Pulls the server wishlist (same rows as web `/my-wishlists`) and merges
+  /// it into the local list. Call on wishlist screen open + pull-to-refresh.
+  Future<void> syncFromApi() async {
+    if (!UserSession.isLoggedIn) return;
+    try {
+      final items = await ApiService.fetchWishlist();
+      if (items.isEmpty) return;
+      for (final raw in items) {
+        if (raw is! Map) continue;
+        final m = Map<String, dynamic>.from(raw);
+        final id = (m['id'] is num) ? (m['id'] as num).toInt() : int.tryParse('${m['id']}');
+        final exists = id != null && WishlistData.list.any((d) => d.id == id);
+        if (!exists) {
+          try {
+            WishlistData.list.add(Destination.fromJson(m));
+          } catch (_) {}
+        }
+      }
+      await WishlistData.save();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Wishlist sync error: $e');
+    }
   }
 
   bool contains(Destination destination) {

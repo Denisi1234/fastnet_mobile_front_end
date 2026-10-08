@@ -1,337 +1,392 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import 'package:fastnet_mobile_front_end/services/api_service.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/write_review_screen.dart';
+
+/// Guest reviews — real backend rows only (`GET /properties/{id}/reviews`).
+/// An empty backend renders an honest empty state, never sample reviews.
 class ReviewsScreen extends StatefulWidget {
   final String lodgeName;
+  final int? propertyId;
 
-  const ReviewsScreen({Key? key, required this.lodgeName}) : super(key: key);
+  const ReviewsScreen({super.key, required this.lodgeName, this.propertyId});
 
   @override
   State<ReviewsScreen> createState() => _ReviewsScreenState();
 }
 
 class _ReviewsScreenState extends State<ReviewsScreen> {
-  // Initial list of guest reviews
-  final List<Map<String, dynamic>> _reviews = [
-    {
-      'guestName': 'Baraka Mwangi',
-      'rating': 5,
-      'date': 'June 18, 2026',
-      'comment': 'Outstanding experience! The rooms are exceptionally clean, air conditioning works perfectly, and the location is super convenient near local dining.',
-      'avatar': 'assets/images/man2.jpeg'
-    },
-    {
-      'guestName': 'Christina Kim',
-      'rating': 4,
-      'date': 'June 05, 2026',
-      'comment': 'Really comfortable lodge. The host was very responsive and helpful. Safe secure parking and very fast Wi-Fi. Highly recommended.',
-      'avatar': 'assets/images/man.jpeg'
-    },
-    {
-      'guestName': 'John Kamau',
-      'rating': 5,
-      'date': 'May 28, 2026',
-      'comment': 'Absolutely beautiful setup. Feels premium at an affordable budget. Check-in was fully automated and effortless.',
-      'avatar': 'assets/images/man2.jpeg'
-    }
-  ];
+  static const _ink = Color(0xFF1A1D25);
+  static const _muted = Color(0xFF5F6368);
+  static const _faint = Color(0xFF9AA0A6);
+  static const _border = Color(0xFFE8EAED);
+  static const _blue = Color(0xFF1A73E8);
 
-  final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
-  final _commentController = TextEditingController();
-  int _selectedRating = 5;
+  bool _loading = true;
+  List<Map<String, dynamic>> _reviews = [];
 
   @override
-  void dispose() {
-    _nameController.dispose();
-    _commentController.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _load();
   }
 
-  void _submitReview() {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _reviews.insert(0, {
-          'guestName': _nameController.text.trim(),
-          'rating': _selectedRating,
-          'date': 'Today',
-          'comment': _commentController.text.trim(),
-          'avatar': 'assets/images/user-2.png' // Fallback avatar asset
-        });
-      });
-      
-      _nameController.clear();
-      _commentController.clear();
-      setState(() {
-        _selectedRating = 5;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Review submitted successfully! Thank you.')),
-      );
+  Future<void> _load() async {
+    final pid = widget.propertyId;
+    if (pid == null) {
+      setState(() => _loading = false);
+      return;
     }
+    final rows = await ApiService.fetchReviews(pid);
+    if (!mounted) return;
+    setState(() {
+      _reviews = rows
+          .whereType<Map>()
+          .map((r) => Map<String, dynamic>.from(r))
+          .toList();
+      _loading = false;
+    });
+  }
+
+  double get _average {
+    final rated = _reviews
+        .map((r) => double.tryParse((r['rating'] ?? '').toString()) ?? 0)
+        .where((v) => v > 0)
+        .toList();
+    if (rated.isEmpty) return 0;
+    return rated.reduce((a, b) => a + b) / rated.length;
+  }
+
+  static String _label(double rating) {
+    if (rating >= 4.5) return 'Exceptional';
+    if (rating >= 4.0) return 'Excellent';
+    if (rating >= 3.5) return 'Very good';
+    if (rating >= 3.0) return 'Good';
+    return 'Pleasant';
+  }
+
+  String _dateOf(Map<String, dynamic> r) {
+    final raw = (r['created_at'] ?? r['date'] ?? '').toString();
+    if (raw.isEmpty) return '';
+    final dt = DateTime.tryParse(raw);
+    if (dt == null) return raw;
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+  }
+
+  void _openWriteReview() {
+    final pid = widget.propertyId;
+    if (pid == null) return;
+    HapticFeedback.selectionClick();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => WriteReviewScreen(
+          propertyName: widget.lodgeName,
+          propertyId: pid,
+        ),
+      ),
+    ).then((_) => _load());
   }
 
   @override
   Widget build(BuildContext context) {
+    final avg = _average;
+    final hasRating = avg > 0;
+    final visible = _reviews.where((r) {
+      final author = (r['user_name'] ?? r['guest_name'] ?? r['name'] ?? '')
+          .toString()
+          .trim();
+      final comment = (r['comment'] ?? '').toString().trim();
+      return author.isNotEmpty || comment.isNotEmpty;
+    }).toList();
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
-        elevation: 0.5,
-        iconTheme: const IconThemeData(color: Colors.black),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        iconTheme: const IconThemeData(color: _ink),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Guest Reviews', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 17)),
-            Text(widget.lodgeName, style: TextStyle(color: Colors.grey.shade600, fontSize: 12, fontWeight: FontWeight.w400)),
+            const Text('Guest Reviews',
+                style: TextStyle(
+                    color: _ink,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 17)),
+            Text(widget.lodgeName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: _muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w400)),
           ],
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Overall Score Card
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: Row(
-                children: [
-                  const Text(
-                    '4.8',
-                    style: TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: Colors.black87),
-                  ),
-                  const SizedBox(width: 16),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Excellent', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: List.generate(5, (i) => Icon(Icons.star, color: i < 5 ? Colors.amber : Colors.grey, size: 16)),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Based on ${_reviews.length} guest reviews',
-                        style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // Airbnb-style rating category scores
-            const Text('Rating Metrics', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            Column(
-              children: [
-                _buildRatingMetric('Cleanliness', 4.8),
-                _buildRatingMetric('Accuracy', 4.9),
-                _buildRatingMetric('Communication', 4.7),
-                _buildRatingMetric('Location', 4.9),
-                _buildRatingMetric('Check-in', 4.8),
-                _buildRatingMetric('Value', 4.6),
-              ],
-            ),
-            const SizedBox(height: 32),
-
-            // Reviews List
-            Text('All Reviews (${_reviews.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: _reviews.length,
-              itemBuilder: (context, index) {
-                final rev = _reviews[index];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 20,
-                            backgroundImage: AssetImage(rev['avatar']),
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(rev['guestName'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                              const SizedBox(height: 2),
-                              Text(rev['date'], style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
-                            ],
-                          ),
-                          const Spacer(),
-                          Row(
-                            children: List.generate(5, (starIndex) {
-                              return Icon(
-                                Icons.star,
-                                color: starIndex < rev['rating'] ? Colors.black87 : Colors.grey.shade300,
-                                size: 14,
-                              );
-                            }),
-                          )
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        rev['comment'],
-                        style: TextStyle(color: Colors.grey.shade800, fontSize: 14, height: 1.4),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 16),
-            const Divider(),
-            const SizedBox(height: 24),
-
-            // Write a review block (moved to the bottom for better UX flow)
-            const Text('Write a Guest Review', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF9FAFB),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextFormField(
-                      controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Your Name',
-                        hintText: 'Enter your full name',
-                        border: InputBorder.none,
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Please enter your name';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    // Interactive Star Selection
-                    Row(
-                      children: [
-                        const Text('Rating: ', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                        const SizedBox(width: 8),
-                        Row(
-                          children: List.generate(5, (index) {
-                            final score = index + 1;
-                            return GestureDetector(
-                              onTap: () {
-                                setState(() {
-                                  _selectedRating = score;
-                                });
-                              },
-                              child: Icon(
-                                Icons.star,
-                                color: score <= _selectedRating ? Colors.amber : Colors.grey.shade300,
-                                size: 28,
-                              ),
-                            );
-                          }),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: _commentController,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Your Comment',
-                        hintText: 'Share details of your experience...',
-                        border: InputBorder.none,
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Please write a review comment';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton(
-                        onPressed: _submitReview,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red.shade900,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
-                        child: const Text('Submit Review', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ],
+      body: _loading
+          ? ListView.separated(
+              padding: const EdgeInsets.all(24),
+              itemCount: 3,
+              separatorBuilder: (_, __) =>
+                  const SizedBox(height: 16),
+              itemBuilder: (_, __) => Container(
+                height: 96,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(12),
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
-          ],
-        ),
-      ),
+            )
+          : visible.isEmpty
+              ? _emptyState()
+              : ListView(
+                  padding:
+                      const EdgeInsets.fromLTRB(24, 16, 24, 32),
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: _border),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            hasRating
+                                ? avg.toStringAsFixed(1)
+                                : 'New',
+                            style: const TextStyle(
+                                fontSize: 40,
+                                fontWeight: FontWeight.w800,
+                                color: _ink),
+                          ),
+                          const SizedBox(width: 16),
+                          Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                hasRating
+                                    ? _label(avg)
+                                    : 'No reviews yet',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 16,
+                                    color: _ink),
+                              ),
+                              const SizedBox(height: 2),
+                              Row(
+                                children: List.generate(
+                                    5,
+                                    (i) => Icon(
+                                          Icons.star_rounded,
+                                          color: hasRating &&
+                                                  i <
+                                                      avg.round()
+                                              ? const Color(
+                                                  0xFFF59E0B)
+                                              : const Color(
+                                                  0xFFE2E8F0),
+                                          size: 16,
+                                        )),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Based on ${visible.length} guest review${visible.length == 1 ? '' : 's'}',
+                                style: const TextStyle(
+                                    color: _muted, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text('All Reviews (${visible.length})',
+                        style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                            color: _ink)),
+                    const SizedBox(height: 12),
+                    for (final rev in visible)
+                      _reviewRow(rev),
+                    if (widget.propertyId != null) ...[
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton(
+                          onPressed: _openWriteReview,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _blue,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.circular(10)),
+                          ),
+                          child: const Text('Write a review',
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
     );
   }
 
-  Widget _buildRatingMetric(String label, double score) {
+  Widget _emptyState() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: 24, vertical: 32),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _border),
+          ),
+          child: Column(
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF1F5F9),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.rate_review_outlined,
+                    size: 26, color: _faint),
+              ),
+              const SizedBox(height: 16),
+              const Text('No reviews yet',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: _ink)),
+              const SizedBox(height: 6),
+              const Text(
+                'Be the first verified guest to stay here and leave a review.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 13.5, color: _muted, height: 1.45),
+              ),
+              if (widget.propertyId != null) ...[
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: _openWriteReview,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _blue,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Write a review',
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _reviewRow(Map<String, dynamic> rev) {
+    final author =
+        (rev['user_name'] ?? rev['guest_name'] ?? rev['name'] ?? '')
+            .toString()
+            .trim();
+    final comment = (rev['comment'] ?? '').toString().trim();
+    final rating =
+        double.tryParse((rev['rating'] ?? '').toString()) ?? 0;
+    final initial = author.isNotEmpty
+        ? author.substring(0, 1).toUpperCase()
+        : '?';
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: Row(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            flex: 3,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey.shade700,
-                fontWeight: FontWeight.w500,
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0xFFE8F0FE),
+                ),
+                child: Text(initial,
+                    style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1967D2))),
               ),
-            ),
-          ),
-          Expanded(
-            flex: 4,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: LinearProgressIndicator(
-                value: score / 5.0,
-                backgroundColor: Colors.grey.shade100,
-                valueColor: const AlwaysStoppedAnimation<Color>(Colors.black87),
-                minHeight: 5,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      author.isNotEmpty ? author : 'Guest',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          color: _ink),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(_dateOf(rev),
+                        style: const TextStyle(
+                            color: _faint, fontSize: 11)),
+                  ],
+                ),
               ),
-            ),
+              Row(
+                children: List.generate(
+                    5,
+                    (i) => Icon(
+                          Icons.star_rounded,
+                          color: i < rating.round()
+                              ? const Color(0xFFF59E0B)
+                              : const Color(0xFFE2E8F0),
+                          size: 15,
+                        )),
+              ),
+            ],
           ),
-          const SizedBox(width: 16),
-          Text(
-            score.toStringAsFixed(1),
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
+          if (comment.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(comment,
+                style: const TextStyle(
+                    fontSize: 13.5, color: _ink, height: 1.5)),
+          ],
+          if (rev['is_verified'] == true || rev['is_verified'] == 1)
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text('| Verified stay',
+                  style: TextStyle(fontSize: 11, color: _faint)),
             ),
-          ),
         ],
       ),
     );

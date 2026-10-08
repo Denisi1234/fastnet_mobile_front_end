@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/property_image.dart';
 
 class TabItem extends StatelessWidget {
   final String text;
@@ -16,8 +17,8 @@ class TabItem extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Image.asset(
-            imageUrl,
+          PropertyImage(
+            url: imageUrl,
             height: 20,
             width: 20,
           ),

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:fastnet_mobile_front_end/models/app_settings.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/host_onboarding_screen.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/host/host_dashboard.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/lodge_services/lodge_services_screen.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/support/support_help_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:fastnet_mobile_front_end/providers/user_session_provider.dart';
@@ -41,55 +40,27 @@ class WebTopHeader extends StatelessWidget implements PreferredSizeWidget {
       padding: const EdgeInsets.symmetric(horizontal: 32),
       child: Row(
         children: [
-          // Authentic FASTNETSTAYS.com Logo
+          // Brand lockup — same as web `templates/element/logo.php`:
+          // logo-icon mark + "fastnetstays.com" wordmark.
           InkWell(
             onTap: () => onTabSelected(0),
             borderRadius: BorderRadius.circular(8),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                RichText(
-                  text: const TextSpan(
-                    children: [
-                      TextSpan(
-                        text: 'FASTNET',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF003580),
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                      TextSpan(
-                        text: 'STAYS',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFFD32F2F),
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                      TextSpan(
-                        text: '.com',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF757575),
-                        ),
-                      ),
-                    ],
-                  ),
+                Image.asset(
+                  'assets/images/fastnet_logo_icon.png',
+                  height: 28,
+                  fit: BoxFit.contain,
                 ),
-                const SizedBox(height: 2),
-                Row(
-                  children: const [
-                    _BrandDot(color: Colors.red),
-                    _BrandDot(color: Colors.orange),
-                    _BrandDot(color: Colors.yellow),
-                    _BrandDot(color: Colors.green),
-                    _BrandDot(color: Colors.blue),
-                  ],
+                const SizedBox(width: 8),
+                const Text(
+                  'fastnetstays.com',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF161616),
+                  ),
                 ),
               ],
             ),
@@ -105,22 +76,6 @@ class WebTopHeader extends StatelessWidget implements PreferredSizeWidget {
               _navButton(context, index: 2, label: 'Messages', icon: Icons.chat_bubble_outline),
               _navButton(context, index: 3, label: 'Profile', icon: Icons.person_outline),
               const SizedBox(width: 16),
-              OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const LodgeServicesDashboard()),
-                  );
-                },
-                icon: const Icon(Icons.room_service_outlined, size: 16),
-                label: const Text('Lodge Services'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF003580),
-                  side: const BorderSide(color: Color(0xFF003580)),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                ),
-              ),
             ],
           ),
 
@@ -221,24 +176,6 @@ class WebTopHeader extends StatelessWidget implements PreferredSizeWidget {
           backgroundColor: isActive ? const Color(0xFF003580).withValues(alpha: 0.08) : Colors.transparent,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         ),
-      ),
-    );
-  }
-}
-
-class _BrandDot extends StatelessWidget {
-  final Color color;
-  const _BrandDot({Key? key, required this.color}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 9,
-      height: 9,
-      margin: const EdgeInsets.only(right: 5),
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
       ),
     );
   }

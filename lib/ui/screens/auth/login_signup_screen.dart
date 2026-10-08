@@ -1,395 +1,441 @@
-import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/auth/forgot_password_screen.dart';
-import 'package:flutter/material.dart';
-import 'package:lottie/lottie.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+
+import 'package:fastnet_mobile_front_end/providers/user_session_provider.dart';
+import 'package:fastnet_mobile_front_end/services/api_service.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/forgot_password_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+
+/// Mobile layout of web `/login` + `/signup` (`carbon-auth-01/02.css`).
+///
+/// White card with the 4px blue top accent and square Carbon inputs on a
+/// grey-10 page; logo + "Welcome Back!" / "Create New Account" titles with
+/// cross-linking ledes; sign-in method switch (Password | Use a code) with
+/// the real OTP request/verify flow; inline danger/success alerts and the
+/// same validation copy as the web. Pops `true` on success (unchanged
+/// contract for existing callers).
 class LoginSignupScreen extends StatefulWidget {
-  const LoginSignupScreen({Key? key}) : super(key: key);
+  final bool initialSignUp;
+  const LoginSignupScreen({super.key, this.initialSignUp = false});
 
   @override
   State<LoginSignupScreen> createState() => _LoginSignupScreenState();
 }
 
-class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTickerProviderStateMixin {
-  final _formKey = GlobalKey<FormState>();
-  bool _isSignUp = false;
-  bool _isPasswordVisible = false;
+class _LoginSignupScreenState extends State<LoginSignupScreen> {
+  // Carbon v11 white-theme tokens (web `carbon-polish.css`).
+  static const _ink = Color(0xFF161616);
+  static const _gray70 = Color(0xFF525252);
+  static const _gray60 = Color(0xFF6F6F6F);
+  static const _gray50 = Color(0xFF8D8D8D);
+  static const _gray30 = Color(0xFFC6C6C6);
+  static const _gray20 = Color(0xFFE0E0E0);
+  static const _gray10 = Color(0xFFF4F4F4);
+  static const _blue = Color(0xFF0F62FE);
+  static const _red = Color(0xFFDA1E28);
+  static const _redBg = Color(0xFFFFF1F1);
+  static const _green = Color(0xFF24A148);
+  static const _greenBg = Color(0xFFDEFBE6);
+  static const _infoBg = Color(0xFFE8F0FE);
 
-  // Controllers
-  final _nameController = TextEditingController();
-  final _phoneController = TextEditingController();
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
+  late bool _isSignUp;
+  String _loginMode = 'password'; // password | code
+
+  // Password pane.
+  final _loginEmailCtrl = TextEditingController();
+  final _loginPassCtrl = TextEditingController();
+  bool _loginPwVisible = false;
+  bool _loginBusy = false;
+
+  // Code pane.
+  final _contactCtrl = TextEditingController();
+  final _codeCtrl = TextEditingController();
+  final _codeFocus = FocusNode();
+  bool _otpSent = false;
+  String _otpTarget = '';
+  bool _codeBusy = false;
+  bool _sendBusy = false;
+  Timer? _resendTimer;
+  int _resendLeft = 0;
+
+  // Signup pane.
+  final _nameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+  bool _signupPwVisible = false;
+  bool _signupBusy = false;
+
+  // Inline alert (web `#login-alert-box` / `#signup-alert-box`).
+  String? _alertKind; // danger | success | info
+  String _alertMsg = '';
+  String _infoEmail = '';
+  final Set<String> _errFields = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _isSignUp = widget.initialSignUp;
+  }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _phoneController.dispose();
-    _emailController.dispose();
-    _passwordController.dispose();
+    _resendTimer?.cancel();
+    _loginEmailCtrl.dispose();
+    _loginPassCtrl.dispose();
+    _contactCtrl.dispose();
+    _codeCtrl.dispose();
+    _codeFocus.dispose();
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _phoneCtrl.dispose();
+    _passCtrl.dispose();
     super.dispose();
   }
 
-  void _submitAuth() async {
-    if (_formKey.currentState!.validate()) {
-      final email = _emailController.text.trim();
-      final password = _passwordController.text;
+  void _setAlert(String? kind, [String msg = '', String infoEmail = '']) {
+    setState(() {
+      _alertKind = kind;
+      _alertMsg = msg;
+      _infoEmail = infoEmail;
+    });
+  }
 
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(color: Colors.red),
-        ),
-      );
+  void _switchAuthMode(bool signUp) {
+    HapticFeedback.selectionClick();
+    _resendTimer?.cancel();
+    setState(() {
+      _isSignUp = signUp;
+      _loginMode = 'password';
+      _otpSent = false;
+      _resendLeft = 0;
+      _alertKind = null;
+      _alertMsg = '';
+      _errFields.clear();
+    });
+  }
 
-      bool success = false;
-      if (_isSignUp) {
-        final name = _nameController.text.trim();
-        final phone = _phoneController.text.trim();
-        success = await UserSession.registerWithApi(
-          name: name,
-          email: email,
-          password: password,
-          phone: phone,
-          role: 'customer',
-        );
-      } else {
-        success = await UserSession.loginWithApi(email, password);
+  void _switchLoginMode(String mode) {
+    HapticFeedback.selectionClick();
+    _resendTimer?.cancel();
+    setState(() {
+      _loginMode = mode;
+      _otpSent = false;
+      _resendLeft = 0;
+      _alertKind = null;
+      _alertMsg = '';
+      _errFields.clear();
+    });
+  }
+
+  static bool _validEmail(String v) =>
+      RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(v);
+
+  String _maskContact(String contact, String channel) {
+    if (channel == 'sms') {
+      final tail =
+          contact.replaceAll(RegExp(r'\D'), '').split('').reversed.take(4).toList().reversed.join();
+      return tail.isNotEmpty ? '••••••$tail' : 'your phone';
+    }
+    final at = contact.indexOf('@');
+    if (at < 1) return 'your email';
+    return '${contact[0]}•••${contact.substring(at)}';
+  }
+
+  void _backToContact() {
+    _resendTimer?.cancel();
+    setState(() {
+      _otpSent = false;
+      _resendLeft = 0;
+      _alertKind = null;
+      _alertMsg = '';
+    });
+  }
+
+  void _startResendCountdown([int seconds = 45]) {
+    _resendTimer?.cancel();
+    setState(() => _resendLeft = seconds);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
       }
+      setState(() {
+        _resendLeft -= 1;
+        if (_resendLeft <= 0) {
+          _resendLeft = 0;
+          t.cancel();
+        }
+      });
+    });
+  }
 
-      Navigator.pop(context); // Close loading dialog
+  Future<void> _finishSuccess(String message) async {
+    _setAlert('success', message);
+    HapticFeedback.mediumImpact();
+    if (mounted) {
+      Provider.of<UserSessionProvider>(context, listen: false)
+          .updateSession();
+    }
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (mounted) Navigator.pop(context, true);
+  }
 
-      if (success) {
-        final displayName = UserSession.userName ?? email;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle_outline, color: Colors.white),
-                const SizedBox(width: 12),
-                Text(_isSignUp ? 'Welcome aboard, $displayName!' : 'Welcome back, $displayName!'),
-              ],
-            ),
-            backgroundColor: Colors.green.shade800,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
+  // ── Password sign-in (web `web1-login-form`) ──
 
-        Navigator.pop(context, true);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Row(
-              children: [
-                Icon(Icons.error_outline, color: Colors.white),
-                SizedBox(width: 12),
-                Text('Authentication failed. Check your credentials.'),
-              ],
-            ),
-            backgroundColor: Colors.red.shade800,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-      }
+  Future<void> _submitPasswordLogin() async {
+    final email = _loginEmailCtrl.text.trim();
+    final password = _loginPassCtrl.text;
+    final errs = <String>{};
+    if (!_validEmail(email)) errs.add('login-email');
+    if (password.isEmpty) errs.add('login-password');
+    setState(() {
+      _errFields
+        ..clear()
+        ..addAll(errs);
+    });
+    if (errs.isNotEmpty) {
+      _setAlert('danger',
+          !_validEmail(email) ? 'Please enter a valid email address.' : 'Please enter your password.');
+      return;
+    }
+    HapticFeedback.selectionClick();
+    setState(() {
+      _loginBusy = true;
+      _alertKind = null;
+    });
+    final ok = await UserSession.loginWithApi(email, password);
+    if (!mounted) return;
+    setState(() => _loginBusy = false);
+    if (ok) {
+      await _finishSuccess('Login successful! Taking you there...');
+    } else {
+      _setAlert('danger',
+          ApiService.lastError ?? 'Invalid email or password.');
     }
   }
+
+  // ── Passwordless sign-in (web `web1-otp-form`) ──
+
+  Future<void> _sendCode({bool resend = false}) async {
+    final contact = _contactCtrl.text.trim();
+    if (contact.isEmpty) {
+      setState(() => _errFields.add('contact'));
+      _setAlert('danger', 'Enter your mobile number or email.');
+      return;
+    }
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (resend) {
+        _codeBusy = true;
+      } else {
+        _sendBusy = true;
+      }
+      _alertKind = null;
+    });
+    final data = resend
+        ? await ApiService.resendLoginOtp(contact)
+        : await ApiService.requestLoginOtp(contact);
+    if (!mounted) return;
+    setState(() {
+      _sendBusy = false;
+      _codeBusy = false;
+    });
+    if (data != null) {
+      final channel = (data['channel'] ?? 'email').toString();
+      setState(() {
+        _otpSent = true;
+        _otpTarget = _maskContact(contact, channel);
+        _codeCtrl.clear();
+      });
+      _setAlert('success', 'We sent a 6-digit code to $_otpTarget.');
+      _startResendCountdown(
+          (data['retry_after'] as num?)?.toInt() ?? 45);
+      _codeFocus.requestFocus();
+    } else {
+      _setAlert('danger',
+          ApiService.lastError ?? 'We could not send a code. Please try again.');
+    }
+  }
+
+  Future<void> _verifyCode() async {
+    final code = _codeCtrl.text.replaceAll(RegExp(r'\D'), '');
+    if (code.length != 6) {
+      setState(() => _errFields.add('code'));
+      _setAlert('danger', 'Enter all 6 digits of the code.');
+      return;
+    }
+    HapticFeedback.selectionClick();
+    setState(() {
+      _codeBusy = true;
+      _alertKind = null;
+    });
+    final ok =
+        await UserSession.loginWithOtp(_contactCtrl.text.trim(), code);
+    if (!mounted) return;
+    setState(() => _codeBusy = false);
+    if (ok) {
+      await _finishSuccess('Signed in! Taking you there...');
+    } else {
+      setState(() => _codeCtrl.clear());
+      _setAlert('danger',
+          ApiService.lastError ?? 'That code is not correct. Please try again.');
+      _codeFocus.requestFocus();
+    }
+  }
+
+  // ── Signup (web `web1-signup-form`) ──
+
+  Future<void> _submitSignup() async {
+    final name = _nameCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
+    final phone = _phoneCtrl.text.trim();
+    final password = _passCtrl.text;
+    String? fail;
+    final errs = <String>{};
+    if (name.length < 2) {
+      fail = 'Please enter your full name.';
+      errs.add('name');
+    } else if (!_validEmail(email)) {
+      fail = 'Please enter a valid email address.';
+      errs.add('email');
+    } else if (password.length < 8) {
+      fail = 'Password must be at least 8 characters.';
+      errs.add('password');
+    }
+    setState(() {
+      _errFields
+        ..clear()
+        ..addAll(errs);
+    });
+    if (fail != null) {
+      _setAlert('danger', fail);
+      return;
+    }
+    HapticFeedback.selectionClick();
+    setState(() {
+      _signupBusy = true;
+      _alertKind = null;
+    });
+    final ok = await UserSession.registerWithApi(
+      name: name,
+      email: email,
+      password: password,
+      phone: phone,
+      role: 'customer',
+    );
+    if (!mounted) return;
+    setState(() => _signupBusy = false);
+    if (ok) {
+      await _finishSuccess('Registration successful! Taking you there...');
+      return;
+    }
+    final msg = ApiService.lastError ?? 'Registration failed.';
+    final lower = msg.toLowerCase();
+    if (lower.contains('already been taken') ||
+        lower.contains('already taken') ||
+        lower.contains('already exists')) {
+      _setAlert('info',
+          'An account with $email is already registered. Simply sign in.',
+          email);
+    } else {
+      _setAlert('danger', msg);
+    }
+  }
+
+  // ───────────────────────── build ─────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: _gray10,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
+        scrolledUnderElevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.close, color: Colors.black87),
+          icon: const Icon(Icons.close_rounded, color: _ink),
           onPressed: () => Navigator.pop(context, false),
         ),
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(
+              top: BorderSide(color: _blue, width: 4),
+              left: BorderSide(color: _gray20),
+              right: BorderSide(color: _gray20),
+              bottom: BorderSide(color: _gray20),
+            ),
+          ),
+          padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Logo & App Name Brand
+              // Logo lockup.
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Colors.pink.shade700, Colors.red.shade900],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.apartment, color: Colors.white, size: 24),
-                  ),
-                  const SizedBox(width: 12),
-                  const Text(
-                    'LODGE',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 2.0,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 30),
-
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 250),
-                child: Column(
-                  key: ValueKey<bool>(_isSignUp),
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _isSignUp ? 'Create your profile' : 'Log in to Lodge',
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
-                        letterSpacing: -0.6,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _isSignUp 
-                          ? 'Sign up to unlock reservations, corridor room maps, and property list host tools.' 
-                          : 'Welcome back! Log in to proceed with your selected room checkout.',
-                      style: TextStyle(color: Colors.grey.shade600, fontSize: 14, height: 1.4),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Interactive secure login graphics
-              Center(
-                child: SizedBox(
-                  width: 100,
-                  height: 100,
-                  child: Lottie.network(
-                    'https://assets10.lottiefiles.com/packages/lf20_y3m3yt.json',
+                  Image.asset(
+                    'assets/images/fastnet_logo_icon.png',
+                    height: 30,
                     fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) => Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.pink.shade50,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.lock_person_outlined,
-                        size: 48,
-                        color: Colors.red.shade900,
-                      ),
+                    errorBuilder: (_, __, ___) => const Icon(
+                        Icons.bolt_rounded, color: _blue, size: 28),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'fastnetstays.com',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF202124),
+                      fontSize: 22,
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              // Dynamic animated Form inputs
-              Form(
-                key: _formKey,
-                child: Column(
-                  children: [
-                    AnimatedCrossFade(
-                      firstChild: const SizedBox.shrink(),
-                      secondChild: Column(
-                        children: [
-                          TextFormField(
-                            controller: _nameController,
-                            keyboardType: TextInputType.name,
-                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-                            decoration: _buildInputDecoration('Full Name', Icons.person_outline),
-                            validator: (value) {
-                              if (_isSignUp && (value == null || value.trim().isEmpty)) {
-                                return 'Please enter your full name';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _phoneController,
-                            keyboardType: TextInputType.phone,
-                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-                            decoration: _buildInputDecoration('Phone Number', Icons.phone_android_outlined),
-                            validator: (value) {
-                              if (_isSignUp && (value == null || value.trim().isEmpty)) {
-                                return 'Please enter your phone number';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 16),
-                        ],
-                      ),
-                      crossFadeState: _isSignUp ? CrossFadeState.showSecond : CrossFadeState.showFirst,
-                      duration: const Duration(milliseconds: 250),
-                    ),
-                    TextFormField(
-                      controller: _emailController,
-                      keyboardType: TextInputType.emailAddress,
-                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-                      decoration: _buildInputDecoration('Email Address', Icons.email_outlined),
-                      validator: (value) {
-                        if (value == null || !value.contains('@') || value.length < 5) {
-                          return 'Try using example@gmail.com';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _passwordController,
-                      obscureText: !_isPasswordVisible,
-                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-                      decoration: _buildPasswordDecoration(),
-                      validator: (value) {
-                        if (value == null || value.length < 4) {
-                          return 'Password must be at least 4 characters';
-                        }
-                        return null;
-                      },
-                    ),
-                    if (!_isSignUp)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const ForgotPasswordScreen(),
-                              ),
-                            );
-                          },
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 4, vertical: 8),
-                          ),
-                          child: Text(
-                            'Forgot password?',
-                            style: TextStyle(
-                              color: Colors.red.shade900,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
+                ],
               ),
               const SizedBox(height: 16),
-
-              // Confirm button
-              Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Colors.pink.shade700, Colors.red.shade900],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.red.shade900.withValues(alpha: 0.2),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    )
-                  ],
-                ),
-                child: ElevatedButton(
-                  onPressed: _submitAuth,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.transparent,
-                    shadowColor: Colors.transparent,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: Text(
-                    _isSignUp ? 'Agree and Register' : 'Continue',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-                  ),
+              Text(
+                _isSignUp ? 'Create New Account' : 'Welcome Back!',
+                style: const TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.26,
+                  color: _ink,
+                  height: 1.2,
                 ),
               ),
-              const SizedBox(height: 18),
-
-              // Switch Sign Up / Log In Toggle
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    _isSignUp ? 'Already have an account? ' : 'First time using Lodge? ',
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+              const SizedBox(height: 6),
+              _lede(),
+              const SizedBox(height: 16),
+              if (_isSignUp) _signupPane() else _loginPane(),
+              const SizedBox(height: 16),
+              // Copyright footer.
+              const Center(
+                child: Text.rich(
+                  TextSpan(
+                    style: TextStyle(fontSize: 12, color: _gray70),
+                    children: [
+                      TextSpan(text: '© FastNet Stays Ltd. '),
+                      TextSpan(
+                          text: 'Privacy',
+                          style: TextStyle(color: _blue)),
+                      TextSpan(text: ' · '),
+                      TextSpan(
+                          text: 'Terms', style: TextStyle(color: _blue)),
+                      TextSpan(text: ' · '),
+                      TextSpan(
+                          text: 'Help', style: TextStyle(color: _blue)),
+                    ],
                   ),
-                  GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        _isSignUp = !_isSignUp;
-                      });
-                    },
-                    child: Text(
-                      _isSignUp ? 'Log In' : 'Sign Up',
-                      style: const TextStyle(
-                        color: Colors.black87,
-                        fontWeight: FontWeight.bold,
-                        decoration: TextDecoration.underline,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 28),
-
-              Row(
-                children: [
-                  Expanded(child: Divider(color: Colors.grey.shade200, thickness: 1)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text('or', style: TextStyle(color: Colors.grey.shade500, fontSize: 13, fontWeight: FontWeight.w500)),
-                  ),
-                  Expanded(child: Divider(color: Colors.grey.shade200, thickness: 1)),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // Beautiful Social Authentic Buttons
-              _buildBrandGoogleButton(),
-              const SizedBox(height: 12),
-              _buildBrandAppleButton(),
-              const SizedBox(height: 24),
-              Center(
-                child: TextButton(
-                  onPressed: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => const MainScreen(initialTab: 0)),
-                    );
-                  },
-                  child: Text(
-                    'Browse without logging in',
-                    style: TextStyle(
-                      color: Colors.grey.shade600,
-                      fontWeight: FontWeight.bold,
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
+                  textAlign: TextAlign.center,
                 ),
               ),
-              const SizedBox(height: 40),
             ],
           ),
         ),
@@ -397,234 +443,615 @@ class _LoginSignupScreenState extends State<LoginSignupScreen> with SingleTicker
     );
   }
 
-  InputDecoration _buildInputDecoration(String label, IconData icon) {
-    return InputDecoration(
-      labelText: label,
-      labelStyle: const TextStyle(color: Colors.black54, fontSize: 14),
-      filled: true,
-      fillColor: Colors.grey.shade50,
-      prefixIcon: Icon(icon, color: Colors.black54, size: 20),
-      contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.red.shade900, width: 1.5),
-      ),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
+  /// Lede line with the cross-link (web `/login` ↔ `/signup` links).
+  Widget _lede() {
+    if (_isSignUp) {
+      return _linkRow(
+        const TextSpan(
+            text: 'Save stays and book instantly. Already a member? ',
+            style: TextStyle(fontSize: 14, height: 1.6, color: _gray70)),
+        'Sign in',
+        () => _switchAuthMode(false),
+      );
+    }
+    return _linkRow(
+      const TextSpan(
+          text: 'Are you new here? ',
+          style: TextStyle(fontSize: 14, height: 1.6, color: _gray70)),
+      'Create an account',
+      () => _switchAuthMode(true),
+    );
+  }
+
+  Widget _linkRow(TextSpan prefix, String link, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Text.rich(
+        TextSpan(children: [
+          prefix,
+          TextSpan(
+              text: link,
+              style: const TextStyle(
+                  fontSize: 14,
+                  height: 1.6,
+                  fontWeight: FontWeight.w500,
+                  color: _blue)),
+        ]),
       ),
     );
   }
 
-  InputDecoration _buildPasswordDecoration() {
-    return InputDecoration(
-      labelText: _isSignUp ? 'Create a password with at least 8 characters' : 'Password',
-      labelStyle: const TextStyle(color: Colors.black54, fontSize: 14),
-      filled: true,
-      fillColor: Colors.grey.shade50,
-      prefixIcon: const Icon(Icons.lock_outline, color: Colors.black54, size: 20),
-      suffixIcon: IconButton(
-        icon: Icon(_isPasswordVisible ? Icons.visibility : Icons.visibility_off, color: Colors.black54, size: 20),
-        onPressed: () {
-          setState(() {
-            _isPasswordVisible = !_isPasswordVisible;
-          });
-        },
-      ),
-      contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.red.shade900, width: 1.5),
-      ),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-    );
-  }
+  // ── Login pane (password | code switch) ──
 
-  Widget _buildBrandGoogleButton() {
-    return SizedBox(
-      width: double.infinity,
-      height: 52,
-      child: OutlinedButton(
-        onPressed: () async {
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => const Center(
-              child: CircularProgressIndicator(color: Colors.red),
+  Widget _loginPane() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _methodSwitch(),
+        const SizedBox(height: 16),
+        if (_loginMode == 'password') ...[
+          _alertBox(),
+          _field(
+            key: 'login-email',
+            label: 'Email Address',
+            controller: _loginEmailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            hint: 'you@example.com',
+          ),
+          const SizedBox(height: 12),
+          _field(
+            key: 'login-password',
+            label: 'Password',
+            controller: _loginPassCtrl,
+            obscure: true,
+            hint: '••••••••',
+            onSubmitted: _submitPasswordLogin,
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: GestureDetector(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const ForgotPasswordScreen()),
+                );
+              },
+              child: const Text('Forgot Password?',
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: _blue)),
             ),
-          );
-          final success = await UserSession.loginWithApi('traveler@fastnet.com', 'password');
-          if (mounted) Navigator.pop(context); // Close loading dialog
-          if (success) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Logged in successfully via Google!')),
-              );
-              Navigator.pop(context, true);
-            }
-          } else {
-            // Offline fallback
-            UserSession.login('Alice Traveler', 'traveler@fastnet.com', '+255 789 999 888');
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Logged in via offline mock (Google)!')),
-              );
-              Navigator.pop(context, true);
-            }
-          }
-        },
-        style: OutlinedButton.styleFrom(
-          side: BorderSide(color: Colors.grey.shade300),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          backgroundColor: Colors.white,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Real Google G logo painted with CustomPainter
-            CustomPaint(
-              size: const Size(22, 22),
-              painter: _GoogleGPainter(),
-            ),
-            const SizedBox(width: 14),
+          ),
+          const SizedBox(height: 16),
+          _cta(
+            label: 'Log In',
+            busyLabel: 'Logging in...',
+            busy: _loginBusy,
+            onTap: _submitPasswordLogin,
+          ),
+        ] else ...[
+          _alertBox(),
+          if (!_otpSent) ...[
             const Text(
-              'Continue with Google',
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87, fontSize: 14),
+              "Sign in without a password. We'll text or email you a 6-digit code.",
+              style: TextStyle(fontSize: 14, color: _gray70, height: 1.5),
+            ),
+            const SizedBox(height: 12),
+            _field(
+              key: 'contact',
+              label: 'Mobile number or email',
+              controller: _contactCtrl,
+              keyboardType: TextInputType.text,
+              hint: '0755 123 456 or you@example.com',
+              onSubmitted: () => _sendCode(),
+            ),
+            const SizedBox(height: 16),
+            _cta(
+              label: 'Send code',
+              busyLabel: 'Sending...',
+              busy: _sendBusy,
+              onTap: () => _sendCode(),
+            ),
+            const SizedBox(height: 12),
+            const Text.rich(
+              TextSpan(
+                style: TextStyle(fontSize: 13, color: _gray70, height: 1.5),
+                children: [
+                  TextSpan(text: 'By continuing you agree to our '),
+                  TextSpan(
+                      text: 'Terms',
+                      style: TextStyle(color: _blue)),
+                  TextSpan(text: ' and '),
+                  TextSpan(
+                      text: 'Privacy Policy',
+                      style: TextStyle(color: _blue)),
+                  TextSpan(text: '.'),
+                ],
+              ),
+            ),
+          ] else ...[
+            Text(
+              'Enter the 6-digit code sent to $_otpTarget.',
+              style: const TextStyle(
+                  fontSize: 14, color: _gray70, height: 1.5),
+            ),
+            const SizedBox(height: 12),
+            _codeField(),
+            const SizedBox(height: 16),
+            _cta(
+              label: 'Verify & sign in',
+              busyLabel: 'Verifying...',
+              busy: _codeBusy,
+              onTap: _verifyCode,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                GestureDetector(
+                  onTap: _backToContact,
+                  child: const Text('Use a different number',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: _blue,
+                          decoration: TextDecoration.underline)),
+                ),
+                GestureDetector(
+                  onTap: _resendLeft > 0 ? null : () => _sendCode(resend: true),
+                  child: Text(
+                    _resendLeft > 0
+                        ? 'Resend code in ${_resendLeft}s'
+                        : 'Resend code',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: _resendLeft > 0 ? _gray50 : _blue,
+                      decoration: _resendLeft > 0
+                          ? TextDecoration.none
+                          : TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
+        ],
+      ],
+    );
+  }
+
+  /// Segmented Password | Use a code switch (web `.cx-switch`).
+  Widget _methodSwitch() {
+    return Container(
+      decoration: BoxDecoration(
+        color: _gray10,
+        border: Border.all(color: _gray20),
+      ),
+      child: Row(
+        children: [
+          _switchBtn('password', 'Password'),
+          _switchBtn('code', 'Use a code'),
+        ],
+      ),
+    );
+  }
+
+  Widget _switchBtn(String mode, String label) {
+    final active = _loginMode == mode;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _switchLoginMode(mode),
+        child: Container(
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: active ? Colors.white : Colors.transparent,
+            border: Border(
+              bottom: BorderSide(
+                  color: active ? _blue : Colors.transparent,
+                  width: 3),
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: active ? _ink : _gray70,
+            ),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildBrandAppleButton() {
+  /// Single centered 6-digit box (web `.cx-code`).
+  Widget _codeField() {
+    final invalid = _errFields.contains('code');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Verification code',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.24,
+                color: _gray70)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _codeCtrl,
+          focusNode: _codeFocus,
+          keyboardType: TextInputType.number,
+          textAlign: TextAlign.center,
+          maxLength: 6,
+          style: const TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 10,
+            color: _ink,
+            height: 1.4,
+          ),
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: InputDecoration(
+            counterText: '',
+            hintText: '000000',
+            hintStyle: const TextStyle(color: _gray50, letterSpacing: 10),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            border: const OutlineInputBorder(
+              borderRadius: BorderRadius.zero,
+              borderSide: BorderSide(color: _gray30),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.zero,
+              borderSide:
+                  BorderSide(color: invalid ? _red : _gray30),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.zero,
+              borderSide: BorderSide(
+                  color: invalid ? _red : _blue, width: 2),
+            ),
+          ),
+          onChanged: (v) {
+            final digits = v.replaceAll(RegExp(r'\D'), '');
+            if (digits.length > 6) {
+              _codeCtrl.text = digits.substring(0, 6);
+              _codeCtrl.selection = TextSelection.fromPosition(
+                  TextPosition(offset: _codeCtrl.text.length));
+            } else if (v != digits) {
+              _codeCtrl.text = digits;
+              _codeCtrl.selection = TextSelection.fromPosition(
+                  TextPosition(offset: digits.length));
+            }
+            if (invalid && digits.isNotEmpty) {
+              setState(() => _errFields.remove('code'));
+            }
+            if (digits.length == 6) _verifyCode();
+          },
+        ),
+      ],
+    );
+  }
+
+  // ── Signup pane (web `web1-signup-form`) ──
+
+  Widget _signupPane() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _alertBox(),
+        _field(
+          key: 'name',
+          label: 'Full Name',
+          controller: _nameCtrl,
+          keyboardType: TextInputType.name,
+        ),
+        const SizedBox(height: 12),
+        _field(
+          key: 'email',
+          label: 'Email Address',
+          controller: _emailCtrl,
+          keyboardType: TextInputType.emailAddress,
+        ),
+        const SizedBox(height: 12),
+        _field(
+          key: 'phone',
+          label: 'Phone Number (Optional)',
+          controller: _phoneCtrl,
+          keyboardType: TextInputType.phone,
+        ),
+        const SizedBox(height: 12),
+        _field(
+          key: 'password',
+          label: 'Enter Password',
+          controller: _passCtrl,
+          obscure: true,
+          onSubmitted: _submitSignup,
+        ),
+        const Padding(
+          padding: EdgeInsets.only(top: 6),
+          child: Text('Minimum 8 characters.',
+              style: TextStyle(fontSize: 12, color: _gray70)),
+        ),
+        const SizedBox(height: 16),
+        _cta(
+          label: 'Create An Account',
+          busyLabel: 'Creating Account...',
+          busy: _signupBusy,
+          onTap: _submitSignup,
+        ),
+      ],
+    );
+  }
+
+  // ── Shared Carbon pieces ──
+
+  /// Inline form alert (web `.alert-danger` / `.alert-success` + the
+  /// already-registered info panel).
+  Widget _alertBox() {
+    if (_alertKind == null) return const SizedBox.shrink();
+    if (_alertKind == 'info') {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(12),
+        decoration: const BoxDecoration(
+          color: _infoBg,
+          border: Border(
+            left: BorderSide(color: _blue, width: 3),
+            top: BorderSide(color: _gray20),
+            right: BorderSide(color: _gray20),
+            bottom: BorderSide(color: _gray20),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('You already have an account!',
+                style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: _ink)),
+            const SizedBox(height: 4),
+            Text(
+              'An account with $_infoEmail is already registered. Simply sign in.',
+              style: const TextStyle(
+                  fontSize: 13.5, height: 1.4, color: _ink),
+            ),
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: () {
+                _emailCtrl.clear();
+                _loginEmailCtrl.text = _infoEmail;
+                _switchAuthMode(false);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 8),
+                color: _blue,
+                child: const Text('Sign in instead →',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    final danger = _alertKind == 'danger';
+    final edge = danger ? _red : _green;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: danger ? _redBg : _greenBg,
+        border: Border(
+          left: BorderSide(color: edge, width: 3),
+          top: const BorderSide(color: _gray20),
+          right: const BorderSide(color: _gray20),
+          bottom: const BorderSide(color: _gray20),
+        ),
+      ),
+      child: Text(
+        _alertMsg,
+        style: const TextStyle(fontSize: 13, color: _ink, height: 1.4),
+      ),
+    );
+  }
+
+  /// Carbon boxed field with separate small-caps label (web `.form-label`
+  /// + `.form-control`): square, 48px, 15px ink.
+  Widget _field({
+    required String key,
+    required String label,
+    required TextEditingController controller,
+    TextInputType keyboardType = TextInputType.text,
+    String? hint,
+    bool obscure = false,
+    VoidCallback? onSubmitted,
+  }) {
+    final invalid = _errFields.contains(key);
+    final isPw = key == 'login-password' || key == 'password';
+    final shown = key == 'login-password'
+        ? _loginPwVisible
+        : (key == 'password' ? _signupPwVisible : true);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.24,
+                color: _gray70)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: controller,
+          keyboardType: keyboardType,
+          obscureText: obscure && !shown,
+          style: const TextStyle(fontSize: 15, color: _ink, height: 1.4),
+          textInputAction: onSubmitted == null
+              ? TextInputAction.next
+              : TextInputAction.done,
+          onSubmitted: onSubmitted == null
+              ? null
+              : (_) => onSubmitted(),
+          onChanged: (_) {
+            if (invalid) setState(() => _errFields.remove(key));
+            if (_alertKind != null) {
+              setState(() {
+                _alertKind = null;
+                _alertMsg = '';
+              });
+            }
+          },
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle:
+                const TextStyle(fontSize: 15, color: _gray50),
+            suffixIcon: isPw
+                ? GestureDetector(
+                    onTap: () {
+                      HapticFeedback.selectionClick();
+                      setState(() {
+                        if (key == 'login-password') {
+                          _loginPwVisible = !_loginPwVisible;
+                        } else {
+                          _signupPwVisible = !_signupPwVisible;
+                        }
+                      });
+                    },
+                    child: Container(
+                      width: 24,
+                      alignment: Alignment.center,
+                      child: Icon(
+                        shown
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        size: 20,
+                        color: _gray60,
+                      ),
+                    ),
+                  )
+                : null,
+            contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14, vertical: 13),
+            border: const OutlineInputBorder(
+              borderRadius: BorderRadius.zero,
+              borderSide: BorderSide(color: _gray30),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.zero,
+              borderSide:
+                  BorderSide(color: invalid ? _red : _gray30),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.zero,
+              borderSide: BorderSide(
+                  color: invalid ? _red : _blue, width: 2),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Carbon primary button (web `.cx-btn`): full-width 48px square blue,
+  /// loading dots + label while busy, grey when disabled.
+  Widget _cta({
+    required String label,
+    required String busyLabel,
+    required bool busy,
+    required VoidCallback onTap,
+  }) {
     return SizedBox(
       width: double.infinity,
-      height: 52,
+      height: 48,
       child: ElevatedButton(
-        onPressed: () async {
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => const Center(
-              child: CircularProgressIndicator(color: Colors.red),
-            ),
-          );
-          final success = await UserSession.loginWithApi('traveler@fastnet.com', 'password');
-          if (mounted) Navigator.pop(context); // Close loading dialog
-          if (success) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Logged in successfully via Apple!')),
-              );
-              Navigator.pop(context, true);
-            }
-          } else {
-            // Offline fallback
-            UserSession.login('Alice Traveler', 'traveler@fastnet.com', '+255 789 999 888');
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Logged in via offline mock (Apple)!')),
-              );
-              Navigator.pop(context, true);
-            }
-          }
-        },
+        onPressed: busy ? null : onTap,
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.black,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          backgroundColor: _blue,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: _gray30,
+          disabledForegroundColor: _gray70,
           elevation: 0,
+          shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.zero),
         ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.apple, color: Colors.white, size: 22),
-            SizedBox(width: 12),
-            Text(
-              'Continue with Apple',
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
-            ),
-          ],
-        ),
+        child: busy
+            ? Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const _Dots(color: Colors.white),
+                  const SizedBox(width: 10),
+                  Text(busyLabel,
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w600)),
+                ],
+              )
+            : Text(label,
+                style: const TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w600)),
       ),
     );
   }
 }
 
-/// Pixel-accurate Google 'G' logo painter using official brand colours.
-/// Draws the four-colour arc with the horizontal white notch and the
-/// blue rectangular extension — matching Google's published brand guidelines.
-class _GoogleGPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final double cx = size.width / 2;
-    final double cy = size.height / 2;
-    final double r = size.width / 2;
-    final double strokeW = size.width * 0.22;
-    final double halfStroke = strokeW / 2;
-
-    // Arc paint helper
-    Paint arcPaint(Color color) => Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeW
-      ..strokeCap = StrokeCap.butt;
-
-    final rect = Rect.fromCircle(center: Offset(cx, cy), radius: r - halfStroke);
-
-    // ── Four coloured arcs (angles in radians, 0 = right/3 o'clock) ──
-
-    // Red: top-right → bottom-right (337.5° → 360° + 0° → 45°)  ≈ 67.5°
-    canvas.drawArc(rect, _deg(-22.5), _deg(67.5), false, arcPaint(const Color(0xFFEA4335)));
-
-    // Yellow: bottom-right → bottom-left  ≈ 90°  (45° → 135°)
-    canvas.drawArc(rect, _deg(45), _deg(90), false, arcPaint(const Color(0xFFFBBC05)));
-
-    // Green: bottom-left → top-left  ≈ 90°  (135° → 225°)
-    canvas.drawArc(rect, _deg(135), _deg(90), false, arcPaint(const Color(0xFF34A853)));
-
-    // Blue: top-left → top-right  ≈ 112.5°  (225° → 337.5°)
-    canvas.drawArc(rect, _deg(225), _deg(112.5), false, arcPaint(const Color(0xFF4285F4)));
-
-    // ── White gap / notch at the right (hides arc join seam) ──
-    final gapPaint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeW + 1.5
-      ..strokeCap = StrokeCap.butt;
-    canvas.drawArc(rect, _deg(-24), _deg(48), false, gapPaint);
-
-    // ── Blue horizontal bar (the cross-arm of the G) ──
-    final barPaint = Paint()
-      ..color = const Color(0xFF4285F4)
-      ..style = PaintingStyle.fill;
-
-    // Bar runs from centre to right edge, vertically centred
-    final barHeight = strokeW * 0.9;
-    final barRect = Rect.fromLTRB(
-      cx,                        // starts at centre
-      cy - barHeight / 2,
-      size.width - halfStroke + 1, // ends at right edge of arc
-      cy + barHeight / 2,
-    );
-    canvas.drawRect(barRect, barPaint);
-
-    // Small red arc re-drawn on top of bar-right to restore round end
-    canvas.drawArc(rect, _deg(-24), _deg(24), false, arcPaint(const Color(0xFFEA4335)));
-  }
-
-  static double _deg(double degrees) => degrees * 3.1415926535 / 180.0;
+/// Web `.p-dots` loading dots.
+class _Dots extends StatefulWidget {
+  final Color color;
+  const _Dots({required this.color});
 
   @override
-  bool shouldRepaint(_GoogleGPainter oldDelegate) => false;
+  State<_Dots> createState() => _DotsState();
 }
 
+class _DotsState extends State<_Dots> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 900))
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            final t = ((_ctrl.value * 3 - i * 0.5).clamp(0.0, 1.0));
+            final scale = 0.5 + 0.5 * (0.5 - (t - 0.5).abs()) * 2;
+            return Container(
+              width: 6 * scale,
+              height: 6 * scale,
+              margin: const EdgeInsets.symmetric(horizontal: 2),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: widget.color.withValues(alpha: 0.4 + 0.6 * t),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}

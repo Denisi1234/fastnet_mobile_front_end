@@ -1,21 +1,34 @@
-import 'dart:math';
 import 'dart:async';
-import 'package:fastnet_mobile_front_end/models/destination.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/receipt_screen.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/reviews_screen.dart';
-import 'package:fastnet_mobile_front_end/services/api_service.dart';
-import 'package:fastnet_mobile_front_end/services/draft_booking_service.dart';
-import 'package:fastnet_mobile_front_end/services/supabase_service.dart';
-import 'package:fastnet_mobile_front_end/services/receipt_pdf_service.dart';
-import 'package:fastnet_mobile_front_end/ui/widgets/reward_animations.dart';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:fastnet_mobile_front_end/models/app_settings.dart';
-import 'package:fastnet_mobile_front_end/ui/widgets/web_header.dart';
-import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
 
+import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/services/api_service.dart';
+import 'package:fastnet_mobile_front_end/services/draft_booking_service.dart';
+import 'package:fastnet_mobile_front_end/services/receipt_pdf_service.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/receipt_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/main_screen.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/property_image.dart';
+import 'package:fastnet_mobile_front_end/ui/widgets/reward_animations.dart';
+
+/// Checkout — mobile layout of web `/bookingpage-03`
+/// (`bookingpage-03.css`, Agoda style).
+///
+/// Compact stepper (Step 2 of 3 + Secure), price-guarantee timer bar,
+/// stay summary card first, mobile-money payment card, email note, pay
+/// card with inline errors, and the Agoda price breakdown:
+///
+///   N × Room (nights) · Mobile-money processing (1%) ·
+///   Taxes & fees Included · dashed Total.
+///
+/// The backend engine is untouched: room lock/unlock, 10-minute hold,
+/// quote via `POST /bookings/calculate`, `POST /bookings/create`,
+/// AzamPay `POST /payments/checkout`, e-receipt + bookings sync.
+/// No simulation dialogs, no card brands (the backend rejects cards —
+/// same rule as the web).
 class BookingCheckoutScreen extends StatefulWidget {
   final Destination destination;
   final String selectedDatesText;
@@ -37,57 +50,122 @@ class BookingCheckoutScreen extends StatefulWidget {
 }
 
 class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
-  final _formKey = GlobalKey<FormState>();
-  
-  // Payment Details Controllers (for local simulation)
-  final _cardNoController = TextEditingController();
-  final _expiryController = TextEditingController();
-  final _cvvController = TextEditingController();
-  final _crdbAccController = TextEditingController();
-  final _mobileWalletPhoneController = TextEditingController();
+  // Web `bookingpage-03.css` tokens.
+  static const _ink = Color(0xFF0F172A);
+  static const _body = Color(0xFF334155);
+  static const _muted = Color(0xFF64748B);
+  static const _faint = Color(0xFF94A3B8);
+  static const _pageBg = Color(0xFFF4F4F4);
+  static const _cardBorder = Color(0xFFCBD5E1);
+  static const _hairline = Color(0xFFE2E8F0);
+  static const _boxBg = Color(0xFFF8FAFC);
+  static const _blue = Color(0xFF0F62FE);
+  static const _green = Color(0xFF059669);
+  static const _timerBg = Color(0xFFFFFBEB);
+  static const _timerBorder = Color(0xFFFEF3C7);
+  static const _timerFg = Color(0xFF92400E);
+  static const _timerStrong = Color(0xFFB45309);
+  static const _dangerBg = Color(0xFFFDECEA);
+  static const _dangerBorder = Color(0xFFF5C6CB);
+  static const _dangerFg = Color(0xFF7D2E2E);
+
+  // Mobile-money networks (web `cds-pay-tile` set — no card brands).
+  static const _methods = [
+    {
+      'key': 'Vodacom M-Pesa',
+      'title': 'M-Pesa',
+      'sub': 'Vodacom',
+      'asset': 'assets/images/vodacom_logo.png',
+    },
+    {
+      'key': 'Tigo Pesa',
+      'title': 'Tigo Pesa',
+      'sub': 'Tigo',
+      'asset': 'assets/images/mix by yas.jpg',
+    },
+    {
+      'key': 'Airtel Money',
+      'title': 'Airtel Money',
+      'sub': 'Airtel',
+      'asset': 'assets/images/airtel logo.png',
+    },
+    {
+      'key': 'Halotel HaloPesa',
+      'title': 'HaloPesa',
+      'sub': 'Halotel',
+      'asset': 'assets/images/halotel_logo.jpg',
+    },
+  ];
+
+  final _phoneCtrl = TextEditingController();
+  final _phoneFocus = FocusNode();
+  final _guestNameCtrl = TextEditingController();
+  final _guestEmailCtrl = TextEditingController();
 
   String _selectedPaymentMethod = 'Vodacom M-Pesa';
   bool _isLoading = false;
   int _loadingStep = 0;
   bool _bookingCompleted = false;
+  bool _holdExpired = false;
   Timer? _holdTimer;
-  int _remainingSeconds = 600; // 10 minutes temporary room lock
+  int _remainingSeconds = 600; // 10-minute room lock, like the web guarantee
+  String? _formError;
+
+  // Real quote (`POST /bookings/calculate`, web `BookingsQuoteTrait`);
+  // null until it lands — local math below is the fallback, never shown
+  // as a quote.
+  bool _quoteLoading = true;
+  double? _qSubtotal;
+  double? _qFee;
+  double? _qTotal;
 
   late String _currentDatesText;
   late int _currentNumNights;
   late int _currentGuestsCount;
 
-  final List<Map<String, dynamic>> _paymentOptions = [
-    {'name': 'Vodacom M-Pesa', 'asset': 'assets/images/vodacom_logo.png', 'icon': Icons.phone_android},
-    {'name': 'Tigo Pesa', 'asset': 'assets/images/mix by yas.jpg', 'icon': Icons.phone_android},
-    {'name': 'Airtel Money', 'asset': 'assets/images/airtel logo.png', 'icon': Icons.phone_android},
-    {'name': 'Halotel HaloPesa', 'asset': 'assets/images/halotel_logo.jpg', 'icon': Icons.phone_android},
-    {'name': 'Mastercard', 'asset': 'assets/images/mastercard-logo.png', 'icon': Icons.credit_card},
-    {'name': 'Visa Card', 'asset': 'assets/images/VISA_LOGO.png', 'icon': Icons.credit_card},
-  ];
+  bool get _loggedIn => UserSession.isLoggedIn;
+
+  double get _roomPrice =>
+      _qSubtotal ??
+      (widget.destination.price * _currentNumNights).toDouble();
+  double get _fee {
+    if (_qFee != null) return _qFee!;
+    // Quote gave a total but no itemized fee: derive it so the rows
+    // always add up instead of mixing quote and local math.
+    final t = _qTotal;
+    if (t != null) {
+      final derived = t - _roomPrice;
+      if (derived >= 0) return derived;
+    }
+    return (_roomPrice * 0.01).roundToDouble();
+  }
+
+  double get _total => _qTotal ?? (_roomPrice + _fee);
+
+  String get _receiptEmail => _loggedIn
+      ? (UserSession.userEmail ?? '')
+      : _guestEmailCtrl.text.trim();
 
   @override
   void initState() {
     super.initState();
     _currentDatesText = widget.selectedDatesText;
     _currentNumNights = widget.numNights > 0 ? widget.numNights : 1;
-    _currentGuestsCount = widget.destination.guests > 0 ? widget.destination.guests : 1;
+    _currentGuestsCount =
+        widget.destination.guests > 0 ? widget.destination.guests : 1;
     _acquireRealTimeLock();
     _startHoldTimer();
     _saveDraft();
-    if (_mobileWalletPhoneController.text.isEmpty) {
-      _mobileWalletPhoneController.text = '255';
-    }
+    _fetchQuote();
   }
 
   @override
   void dispose() {
     _holdTimer?.cancel();
-    _cardNoController.dispose();
-    _expiryController.dispose();
-    _cvvController.dispose();
-    _crdbAccController.dispose();
-    _mobileWalletPhoneController.dispose();
+    _phoneCtrl.dispose();
+    _phoneFocus.dispose();
+    _guestNameCtrl.dispose();
+    _guestEmailCtrl.dispose();
     if (!_bookingCompleted) {
       ApiService.unlockRoom(widget.selectedRoomId);
       // Draft stays so user can resume
@@ -110,9 +188,12 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
 
   void _acquireRealTimeLock() async {
     final dates = parseDateRange(widget.selectedDatesText);
-    final response = await ApiService.lockRoom(widget.selectedRoomId, dates[0], dates[1]);
+    final checkIn = dates.isNotEmpty ? dates[0] : _checkInIso();
+    final checkOut = dates.length > 1 ? dates[1] : _checkOutIso();
+    final response =
+        await ApiService.lockRoom(widget.selectedRoomId, checkIn, checkOut);
     if (response == null) return;
-    
+
     final status = response['status'] as int;
     if (status == 409) {
       if (mounted) {
@@ -121,10 +202,13 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
           barrierDismissible: false,
           builder: (context) {
             return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: const Text('Room Unavailable', style: TextStyle(fontWeight: FontWeight.bold)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              title: const Text('Room Unavailable',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
               content: Text(
-                response['body']['message'] ?? 'This room is currently held by another customer. Please choose a different room.',
+                response['body']['message'] ??
+                    'This room is currently held by another customer. Please choose a different room.',
               ),
               actions: [
                 TextButton(
@@ -132,7 +216,10 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
                     Navigator.pop(context); // Pop dialog
                     Navigator.pop(context); // Pop checkout screen
                   },
-                  child: Text('OK', style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold)),
+                  child: Text('OK',
+                      style: TextStyle(
+                          color: Colors.red.shade900,
+                          fontWeight: FontWeight.bold)),
                 ),
               ],
             );
@@ -146,9 +233,13 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
     try {
       final now = DateTime.now();
       final currentYear = now.year;
-      final monthsAbbr = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const monthsAbbr = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      ];
 
-      final parts = dateRangeText.split('–').map((e) => e.trim()).toList();
+      final parts =
+          dateRangeText.split('–').map((e) => e.trim()).toList();
       if (parts.length != 2) throw Exception("Invalid range parts");
 
       final startPart = parts[0];
@@ -158,8 +249,9 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
       final startMonthStr = startTokens[0];
       final startDayVal = int.parse(startTokens[1]);
       final startMonthVal = monthsAbbr.indexOf(startMonthStr) + 1;
-      
-      final startDate = DateTime(currentYear, startMonthVal, startDayVal);
+
+      final startDate =
+          DateTime(currentYear, startMonthVal, startDayVal);
 
       DateTime endDate;
       final endTokens = endPart.split(' ');
@@ -173,540 +265,20 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
         endDate = DateTime(currentYear, startMonthVal, endDayVal);
       }
 
-      final startFormatted = "${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}";
-      final endFormatted = "${endDate.year}-${endDate.month.toString().padLeft(2, '0')}-${endDate.day.toString().padLeft(2, '0')}";
+      final startFormatted =
+          "${startDate.year}-${startDate.month.toString().padLeft(2, '0')}-${startDate.day.toString().padLeft(2, '0')}";
+      final endFormatted =
+          "${endDate.year}-${endDate.month.toString().padLeft(2, '0')}-${endDate.day.toString().padLeft(2, '0')}";
       return [startFormatted, endFormatted];
     } catch (_) {
       final today = DateTime.now();
       final future = today.add(const Duration(days: 3));
-      final startFormatted = "${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}";
-      final endFormatted = "${future.year}-${future.month.toString().padLeft(2, '0')}-${future.day.toString().padLeft(2, '0')}";
+      final startFormatted =
+          "${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}";
+      final endFormatted =
+          "${future.year}-${future.month.toString().padLeft(2, '0')}-${future.day.toString().padLeft(2, '0')}";
       return [startFormatted, endFormatted];
     }
-  }
-
-  void _startHoldTimer() {
-    _holdTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_remainingSeconds > 0) {
-        if (mounted) {
-          setState(() {
-            _remainingSeconds--;
-          });
-        }
-      } else {
-        _holdTimer?.cancel();
-        if (mounted) {
-          _showHoldExpiredDialog();
-        }
-      }
-    });
-  }
-
-  void _showHoldExpiredDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Hold Time Expired', style: TextStyle(fontWeight: FontWeight.bold)),
-          content: const Text(
-            'Your room lock reservation has expired. To secure this listing, please restart the checkout process.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context); // Pop dialog
-                Navigator.pop(context); // Pop checkout screen
-              },
-              child: Text('OK', style: TextStyle(color: Colors.red.shade900, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  String _formatPrice(int price) {
-    return 'TSh ${price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}';
-  }
-
-  IconData _getPaymentIcon(String method) {
-    if (method.contains('Mastercard') || method.contains('Visa')) {
-      return Icons.credit_card;
-    } else if (method.contains('CRDB')) {
-      return Icons.account_balance;
-    }
-    return Icons.phone_android;
-  }
-
-  void _submitBooking() {
-    if (_formKey.currentState!.validate()) {
-      final roomTotal = widget.destination.price * _currentNumNights;
-      final vatTotal = (roomTotal * 0.125).round();
-      final grandTotal = roomTotal + vatTotal;
-
-      if (_selectedPaymentMethod.contains('M-Pesa') || 
-          _selectedPaymentMethod.contains('Tigo Pesa') || 
-          _selectedPaymentMethod.contains('Airtel') ||
-          _selectedPaymentMethod.contains('HaloPesa') ||
-          _selectedPaymentMethod.contains('CRDB')) {
-        _showUSSDPushSimulationDialog(grandTotal);
-      } else {
-        _showOTPSimulationDialog(grandTotal);
-      }
-    }
-  }
-
-  Widget _buildDialogInfoRow(String label, String value) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
-        ),
-        Text(
-          value,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87),
-        ),
-      ],
-    );
-  }
-
-  void _showUSSDPushSimulationDialog(int amount) {
-    final pinController = TextEditingController();
-    final dialogFormKey = GlobalKey<FormState>();
-    final operatorAsset = _getSelectedOperatorAsset();
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 20,
-                  offset: const Offset(0, 10),
-                )
-              ],
-            ),
-            child: Form(
-              key: dialogFormKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 60,
-                    height: 60,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFEBF5FF),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.blue.shade100),
-                    ),
-                    child: operatorAsset != null
-                        ? Image.asset(operatorAsset, fit: BoxFit.contain)
-                        : const Icon(
-                            Icons.lock_person_rounded,
-                            color: Color(0xFF1E88E5),
-                            size: 28,
-                          ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Authorize Payment',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'An STK Push has been sent to your mobile phone. Enter your wallet PIN to authorize.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 13, height: 1.4),
-                  ),
-                  const SizedBox(height: 20),
-                  
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                    ),
-                    child: Column(
-                      children: [
-                        _buildDialogInfoRow('Operator', _selectedPaymentMethod),
-                        const SizedBox(height: 8),
-                        _buildDialogInfoRow('Merchant', 'LODGE RESERVATION'),
-                        const SizedBox(height: 8),
-                        _buildDialogInfoRow('Room', 'Room ${widget.selectedRoomNumber}'),
-                        const Divider(height: 20),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('Total Charge', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: Colors.grey)),
-                            Text(
-                              _formatPrice(amount),
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF1E88E5)),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  
-                  TextFormField(
-                    controller: pinController,
-                    keyboardType: TextInputType.number,
-                    obscureText: true,
-                    maxLength: 4,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 8),
-                    decoration: InputDecoration(
-                      hintText: '••••',
-                      hintStyle: const TextStyle(fontSize: 22, letterSpacing: 8, color: Colors.grey),
-                      counterText: '',
-                      filled: true,
-                      fillColor: const Color(0xFFF8FAFC),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xFF1E88E5), width: 1.5),
-                      ),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.length != 4 || int.tryParse(value) == null) {
-                        return 'Please enter your 4-digit PIN';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 24),
-                  
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(context),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                            side: BorderSide(color: Colors.grey.shade300),
-                          ),
-                          child: const Text('Cancel', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            if (dialogFormKey.currentState!.validate()) {
-                              Navigator.pop(context);
-                              _executeFinalizeBooking();
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1E88E5),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                          ),
-                          child: const Text('Authorize', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _showOTPSimulationDialog(int amount) {
-    final otpController = TextEditingController();
-    final dialogFormKey = GlobalKey<FormState>();
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 20,
-                  offset: const Offset(0, 10),
-                )
-              ],
-            ),
-            child: Form(
-              key: dialogFormKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 56,
-                    height: 56,
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.security,
-                      color: Colors.blue.shade800,
-                      size: 26,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Card Authentication',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Enter the 6-digit one-time verification code (OTP) sent to your registered phone number.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 13, height: 1.4),
-                  ),
-                  const SizedBox(height: 20),
-                  
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade50,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.grey.shade200),
-                    ),
-                    child: Column(
-                      children: [
-                        _buildDialogInfoRow('Payment Method', _selectedPaymentMethod),
-                        const SizedBox(height: 8),
-                        _buildDialogInfoRow('Merchant', 'LODGE RESERVATION'),
-                        const SizedBox(height: 8),
-                        _buildDialogInfoRow('Room', 'Room ${widget.selectedRoomNumber}'),
-                        const Divider(height: 20),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text('Total Charge', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: Colors.grey)),
-                            Text(
-                              _formatPrice(amount),
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF1E88E5)),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  
-                  TextFormField(
-                    controller: otpController,
-                    keyboardType: TextInputType.number,
-                    maxLength: 6,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 8),
-                    decoration: InputDecoration(
-                      hintText: '123456',
-                      hintStyle: const TextStyle(fontSize: 22, letterSpacing: 8, color: Colors.grey),
-                      counterText: '',
-                      filled: true,
-                      fillColor: const Color(0xFFF8FAFC),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xFF1E88E5), width: 1.5),
-                      ),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.length != 6 || int.tryParse(value) == null) {
-                        return 'Please enter a valid 6-digit OTP';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 24),
-                  
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(context),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                            side: BorderSide(color: Colors.grey.shade300),
-                          ),
-                          child: const Text('Cancel', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            if (dialogFormKey.currentState!.validate()) {
-                              Navigator.pop(context);
-                              _executeFinalizeBooking();
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1E88E5),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                          ),
-                          child: const Text('Verify Code', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _executeFinalizeBooking() async {
-    setState(() {
-      _isLoading = true;
-      _loadingStep = 0;
-    });
-
-    // Step 0: the room lock the guest is already holding is settled server-side.
-    await Future<void>.delayed(Duration.zero);
-    if (!mounted) return;
-    setState(() => _loadingStep = 1);
-
-    // Step 1: create the booking for real. This used to be a hard-coded 3.6s
-    // timer ladder that invented a booking code locally and reported the
-    // booking as "Confirmed" without the backend ever being involved.
-    final created = await ApiService.createBooking(
-      widget.selectedRoomId,
-      _checkInIso(),
-      _checkOutIso(),
-    );
-
-    if (!mounted) return;
-    setState(() => _loadingStep = 2);
-
-    final serverBooking = created ?? const <String, dynamic>{};
-    final serverCode = (serverBooking['booking_code'] ?? serverBooking['code'])?.toString();
-    final persisted = serverCode != null && serverCode.isNotEmpty;
-
-    // Prefer the code and total the server issued. Only fall back to a local
-    // reference when the request could not be completed at all.
-    final bookingCode = persisted ? serverCode : _localReferenceCode();
-    final bookingStatus = persisted
-        ? (serverBooking['status']?.toString() ?? 'Pending')
-        : 'Pending';
-    final roomTotal = widget.destination.price * _currentNumNights;
-    final grandTotal = (serverBooking['total_price'] as num?)?.toDouble() ?? roomTotal;
-
-    if (!mounted) return;
-    setState(() {
-      _loadingStep = 3;
-      _isLoading = false;
-    });
-
-    final dt = DateTime.now();
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    final month = months[dt.month - 1];
-    final day = dt.day.toString().padLeft(2, '0');
-    final year = dt.year;
-    final period = dt.hour >= 12 ? 'PM' : 'AM';
-    var hour = dt.hour % 12;
-    if (hour == 0) hour = 12;
-    final hourStr = hour.toString().padLeft(2, '0');
-    final minuteStr = dt.minute.toString().padLeft(2, '0');
-    final paymentTimeStr = '$month $day, $year - $hourStr:$minuteStr $period';
-
-    final bookingData = {
-      'name': '${widget.destination.name} - Room ${widget.selectedRoomNumber}',
-      'city': widget.destination.city,
-      'area': widget.destination.area,
-      'dates': _currentDatesText,
-      'nights': _currentNumNights,
-      'guests': _currentGuestsCount,
-      'price': grandTotal,
-      'code': bookingCode,
-      'imageUrl': widget.destination.imageUrl,
-      'status': bookingStatus,
-      'paymentTime': paymentTimeStr,
-    };
-    BookingsData.list.add(bookingData);
-
-    if (!persisted) {
-      // Nothing was stored server-side, so mirror to the realtime store for
-      // support to reconcile. Status stays "Pending" - never claim otherwise.
-      SupabaseService.createBookingRecord({
-        'booking_code': bookingCode,
-        'lodge_name': widget.destination.name,
-        'room_number': widget.selectedRoomNumber,
-        'guest_name': UserSession.userName ?? 'Guest User',
-        'guest_phone': UserSession.userPhone ?? '',
-        'dates': _currentDatesText,
-        'nights': _currentNumNights,
-        'total_price': grandTotal,
-        'payment_method': _selectedPaymentMethod,
-        'status': bookingStatus,
-        'created_at': DateTime.now().toIso8601String(),
-      });
-    }
-
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(
-        builder: (context) => BookingSuccessScreen(
-          destination: widget.destination,
-          selectedDatesText: _currentDatesText,
-          numNights: _currentNumNights,
-          guestName: UserSession.userName ?? 'Guest User',
-          guestPhone: UserSession.userPhone ?? '+255 712 345 678',
-          paymentMethod: _selectedPaymentMethod,
-          bookingCode: bookingCode,
-          selectedRoomNumber: widget.selectedRoomNumber,
-          paymentTime: paymentTimeStr,
-        ),
-      ),
-      (route) => route.isFirst,
-    );
-  }
-
-  /// Last-resort local reference, used only when the booking API is
-  /// unreachable so the guest still has something to quote to support.
-  String _localReferenceCode() {
-    final random = Random();
-    final city = widget.destination.city;
-    final prefix = city.length >= 3 ? city.substring(0, 3).toUpperCase() : city.toUpperCase();
-    return 'TMP-${10000 + random.nextInt(90000)}-$prefix';
   }
 
   /// Check-in / check-out for the API.
@@ -726,17 +298,26 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
       ];
 
-      final text = _currentDatesText.replaceAll('–', '-').replaceAll(' - ', '-').trim();
+      final text = _currentDatesText
+          .replaceAll('–', '-')
+          .replaceAll(' - ', '-')
+          .trim();
       final yearMatch = RegExp(r'\d{4}').firstMatch(text);
-      final year = yearMatch != null ? int.parse(yearMatch.group(0)!) : today.year;
+      final year =
+          yearMatch != null ? int.parse(yearMatch.group(0)!) : today.year;
 
-      final parts = text.split('-').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
+      final parts = text
+          .split('-')
+          .map((p) => p.trim())
+          .where((p) => p.isNotEmpty)
+          .toList();
       if (parts.length < 2) {
         throw const FormatException('missing end date');
       }
 
       DateTime parse(String part, int fallbackMonth) {
-        final cleaned = part.replaceAll(RegExp(r',\s*\d{4}'), '').trim();
+        final cleaned =
+            part.replaceAll(RegExp(r',\s*\d{4}'), '').trim();
         final tokens = cleaned.split(RegExp(r'\s+'));
         final month = monthsAbbr.indexOf(tokens.first) + 1;
         if (month <= 0 || tokens.length < 2) {
@@ -745,7 +326,10 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
         return DateTime(year, month, int.parse(tokens[1]));
       }
 
-      return (start: parse(parts.first, today.month), end: parse(parts.last, today.month));
+      return (
+        start: parse(parts.first, today.month),
+        end: parse(parts.last, today.month)
+      );
     } catch (_) {
       return (
         start: fallbackStart,
@@ -768,411 +352,309 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
         '${end.day.toString().padLeft(2, '0')}';
   }
 
-  Widget _buildLoadingProgressItem({
-    required String text,
-    required bool isActive,
-    required bool isDone,
-  }) {
-    Color textColor = Colors.grey.shade400;
-    Widget leadingWidget = Icon(Icons.radio_button_unchecked, color: Colors.grey.shade300, size: 20);
-
-    if (isDone) {
-      textColor = Colors.black87;
-      leadingWidget = const Icon(Icons.check_circle, color: Colors.green, size: 20);
-    } else if (isActive) {
-      textColor = Colors.red.shade900;
-      leadingWidget = SizedBox(
-        width: 16,
-        height: 16,
-        child: CircularProgressIndicator(
-          strokeWidth: 2,
-          valueColor: AlwaysStoppedAnimation<Color>(Colors.red.shade900),
-        ),
-      );
+  /// Real price quote (web `BookingsQuoteTrait`). Silent fallback to local
+  /// math — a failed quote never blocks checkout.
+  Future<void> _fetchQuote() async {
+    final pid = widget.destination.id;
+    if (pid == null) {
+      setState(() => _quoteLoading = false);
+      return;
     }
-
-    return Row(
-      children: [
-        SizedBox(width: 20, height: 20, child: Center(child: leadingWidget)),
-        const SizedBox(width: 14),
-        AnimatedDefaultTextStyle(
-          duration: const Duration(milliseconds: 200),
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: (isActive || isDone) ? FontWeight.w600 : FontWeight.normal,
-            color: textColor,
-          ),
-          child: Text(text),
-        ),
-      ],
-    );
+    try {
+      final q = await ApiService.calculateBooking(
+        propertyId: pid,
+        roomId: widget.selectedRoomId,
+        checkIn: _checkInIso(),
+        checkOut: _checkOutIso(),
+        guests: _currentGuestsCount,
+      );
+      if (!mounted || q == null) return;
+      double? asDouble(dynamic v) => v is num
+          ? v.toDouble()
+          : double.tryParse(v?.toString() ?? '');
+      final sub = asDouble(q['subtotal'] ?? q['room_price']);
+      final fee = asDouble(
+          q['azampay_fee'] ?? q['fee'] ?? q['processing_fee']);
+      final tot = asDouble(
+          q['total_amount'] ?? q['total'] ?? q['grand_total']);
+      if (tot != null && tot > 0) {
+        setState(() {
+          _qSubtotal = sub;
+          _qFee = fee;
+          _qTotal = tot;
+        });
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _quoteLoading = false);
+    }
   }
 
-  void _showPaymentBottomSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.close, color: Colors.black87),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'Choose how to pay',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _paymentOptions.length,
-                    itemBuilder: (context, index) {
-                      final option = _paymentOptions[index];
-                      final name = option['name'] as String;
-                      final asset = option['asset'] as String?;
-                      final icon = option['icon'] as IconData;
-                      final isSelected = _selectedPaymentMethod == name;
+  void _startHoldTimer() {
+    _holdTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_remainingSeconds > 0) {
+        if (mounted) {
+          setState(() {
+            _remainingSeconds--;
+          });
+        }
+      } else {
+        _holdTimer?.cancel();
+        if (mounted && !_holdExpired) {
+          setState(() => _holdExpired = true);
+          _showHoldExpiredDialog();
+        }
+      }
+    });
+  }
 
-                      return ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
-                        leading: asset != null
-                            ? Container(
-                                width: 40,
-                                height: 40,
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade50,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.grey.shade200),
-                                ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(4),
-                                  child: Image.asset(asset, fit: BoxFit.contain),
-                                ),
-                              )
-                            : Icon(icon, color: Colors.black87, size: 24),
-                        title: Text(
-                          name,
-                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: Colors.black87),
-                        ),
-                        trailing: Icon(
-                          isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
-                          color: isSelected ? _blue : Colors.grey.shade400,
-                          size: 22,
-                        ),
-                        onTap: () {
-                          setModalState(() {
-                            _selectedPaymentMethod = name;
-                          });
-                          setState(() {
-                            _selectedPaymentMethod = name;
-                          });
-                          Navigator.pop(context);
-                        },
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                ],
-              ),
-            );
-          },
+  void _showHoldExpiredDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Hold Time Expired',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          content: const Text(
+            'Your room lock reservation has expired. To secure this listing, please restart the checkout process.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context); // Pop dialog
+                Navigator.pop(context); // Pop checkout screen
+              },
+              child: Text('OK',
+                  style: TextStyle(
+                      color: Colors.red.shade900,
+                      fontWeight: FontWeight.bold)),
+            ),
+          ],
         );
       },
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // EXACT SCREENSHOT MATCH
-  // ─────────────────────────────────────────────────────────────────────────
-  static const Color _blue = Color(0xFF2979FF);   // bright blue from screenshot
+  String _formatPrice(num price) {
+    final v = price.toInt().toString().replaceAllMapped(
+          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+          (Match m) => '${m[1]},',
+        );
+    return 'TSh $v';
+  }
 
-  // ── build ─────────────────────────────────────────────────────────────────
-  @override
-  Widget build(BuildContext context) {
-    final roomTotal  = widget.destination.price * _currentNumNights;
-    final vatTotal   = (roomTotal * 0.125).round();
-    final grandTotal = roomTotal + vatTotal;
+  static bool _validEmail(String v) =>
+      RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(v);
 
-    final isDesktopWeb = kIsWeb && !AppSettings.instance.isMobileShellMode;
-    if (isDesktopWeb) {
-      return _buildDesktopWebView(context);
+  void _fail(String msg, {bool focusPhone = false}) {
+    HapticFeedback.selectionClick();
+    setState(() => _formError = msg);
+    if (focusPhone) _phoneFocus.requestFocus();
+  }
+
+  Future<void> _submitBooking() async {
+    if (_holdExpired) {
+      _showHoldExpiredDialog();
+      return;
+    }
+    if (!_loggedIn) {
+      if (_guestNameCtrl.text.trim().length < 2) {
+        _fail('Please enter the guest full name.');
+        return;
+      }
+      if (!_validEmail(_guestEmailCtrl.text.trim())) {
+        _fail('Please enter a valid email address.');
+        return;
+      }
+    }
+    final digits = _phoneCtrl.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.length < 9) {
+      _fail(
+          'Enter your mobile money phone number to receive the payment prompt.',
+          focusPhone: true);
+      return;
+    }
+    HapticFeedback.mediumImpact();
+    setState(() => _formError = null);
+    await _executeFinalizeBooking();
+  }
+
+  Future<void> _executeFinalizeBooking() async {
+    setState(() {
+      _isLoading = true;
+      _loadingStep = 0;
+    });
+
+    // Step 0: the room lock the guest is already holding is settled server-side.
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    setState(() => _loadingStep = 1);
+
+    // Step 1: create the booking for real via the backend (web parity:
+    // BookingsCheckoutTrait → POST /bookings/create). Guest contact is sent
+    // so logged-out guests still get an owned booking.
+    final created = await ApiService.createBooking(
+      widget.selectedRoomId,
+      _checkInIso(),
+      _checkOutIso(),
+      guestName:
+          _loggedIn ? UserSession.userName : _guestNameCtrl.text.trim(),
+      guestEmail:
+          _loggedIn ? UserSession.userEmail : _guestEmailCtrl.text.trim(),
+      guestPhone: _phoneCtrl.text.trim().isNotEmpty
+          ? _phoneCtrl.text.trim()
+          : UserSession.userPhone,
+      paymentMethod: _selectedPaymentMethod,
+      paymentPhone: _phoneCtrl.text.trim().isNotEmpty
+          ? _phoneCtrl.text.trim()
+          : UserSession.userPhone,
+    );
+
+    if (!mounted) return;
+    setState(() => _loadingStep = 2);
+
+    // Backend nests the record under `booking:{...}` (BookingCreationService).
+    final top = created ?? const <String, dynamic>{};
+    final nested = top['booking'] is Map<String, dynamic>
+        ? top['booking'] as Map<String, dynamic>
+        : (top['data'] is Map<String, dynamic>
+            ? top['data'] as Map<String, dynamic>
+            : top);
+    final serverCode =
+        (top['booking_code'] ?? nested['booking_code'] ?? top['code'])
+            ?.toString();
+    final bookingId = int.tryParse(
+            (nested['id'] ?? top['booking_id'] ?? '').toString()) ??
+        0;
+
+    if (serverCode == null || serverCode.isEmpty) {
+      // No server record (offline/validation). Surface the backend message
+      // instead of inventing a "Confirmed" booking.
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _fail(ApiService.lastError ??
+            'Booking failed. Check connection and try again.');
+      }
+      return;
+    }
+    final String bookingCode = serverCode;
+
+    // Step 2: dispatch the mobile-money push (web parity: PaymentService).
+    // Only mobile-money methods reach here — no card option exists.
+    String payStatus = 'pending';
+    final pay = await ApiService.checkoutPayment(
+      bookingId,
+      _selectedPaymentMethod,
+      bookingCode: serverCode,
+      phoneNumber: _phoneCtrl.text.trim().isNotEmpty
+          ? _phoneCtrl.text.trim()
+          : UserSession.userPhone,
+    );
+    if (pay != null) {
+      payStatus =
+          (pay['payment_status'] ?? pay['status'] ?? 'pending').toString();
+    } else if (mounted) {
+      _fail(ApiService.lastError ??
+          'Payment request failed — booking is saved as pending.');
     }
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF0F3FF),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFFF0F3FF),
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        leadingWidth: 60,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 14),
-          child: Center(
-            child: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  boxShadow: [
-                    BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 8, offset: const Offset(0, 2)),
-                  ],
-                ),
-                child: const Icon(Icons.chevron_left_rounded, size: 24, color: Colors.black87),
-              ),
-            ),
-          ),
-        ),
-        title: const Text(
-          'Checkout',
-          style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w700, fontSize: 18),
-        ),
-        centerTitle: true,
-      ),
-      body: Stack(
-        children: [
-          SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+    // Prefer the totals the server issued.
+    final roomTotal = _roomPrice;
+    final fee = _fee;
+    final grandTotal = _total;
 
-                  // ── Hotel card ──────────────────────────────────────────
-                  _screenshotHotelCard(),
-                  const SizedBox(height: 22),
+    if (!mounted) return;
+    setState(() {
+      _loadingStep = 3;
+      _isLoading = false;
+    });
 
-                  // ── Trip Overview ───────────────────────────────────────
-                  const Text('Trip Overview',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.black87)),
-                  const SizedBox(height: 10),
-                  _screenshotTripCard(),
-                  const SizedBox(height: 22),
+    final dt = DateTime.now();
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    final month = months[dt.month - 1];
+    final day = dt.day.toString().padLeft(2, '0');
+    final year = dt.year;
+    final period = dt.hour >= 12 ? 'PM' : 'AM';
+    var hour = dt.hour % 12;
+    if (hour == 0) hour = 12;
+    final hourStr = hour.toString().padLeft(2, '0');
+    final minuteStr = dt.minute.toString().padLeft(2, '0');
+    final paymentTimeStr = '$month $day, $year - $hourStr:$minuteStr $period';
 
-                  // ── Billing Details ─────────────────────────────────────
-                  const Text('Billing Details',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.black87)),
-                  const SizedBox(height: 10),
-                  _screenshotBillingCard(roomTotal, vatTotal, grandTotal),
-                  const SizedBox(height: 22),
+    final guestName = _loggedIn
+        ? (UserSession.userName ?? 'Guest User')
+        : _guestNameCtrl.text.trim();
+    final guestEmail =
+        _loggedIn ? UserSession.userEmail : _guestEmailCtrl.text.trim();
 
-                  // ── Pay with ────────────────────────────────────────────
-                  const Text('Pay with',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.black87)),
-                  const SizedBox(height: 2),
-                  Text('Select your preferred payment method',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-                  const SizedBox(height: 14),
-                  // Payment chips row
-                  _screenshotPaymentRow(),
-                  const SizedBox(height: 20),
+    final bookingData = {
+      'id': bookingId,
+      'name':
+          '${widget.destination.name} - Room ${widget.selectedRoomNumber}',
+      'city': widget.destination.city,
+      'area': widget.destination.area,
+      'dates': _currentDatesText,
+      'nights': _currentNumNights,
+      'guests': _currentGuestsCount,
+      'price': grandTotal,
+      'code': bookingCode,
+      'imageUrl': widget.destination.imageUrl,
+      'status': (nested['status'] ?? top['status'] ?? '').toString().isNotEmpty
+          ? (nested['status'] ?? top['status']).toString()
+          : 'Pending',
+      'payment_status': payStatus,
+      'paymentTime': paymentTimeStr,
+    };
+    BookingsData.list.add(bookingData);
+    await BookingsData.save();
 
-                  // Dynamic payment inputs
-                  _screenshotInputsCard(),
-                ],
-              ),
-            ),
-          ),
-          // Loading overlay
-          if (_isLoading) _screenshotLoadingOverlay(),
-        ],
-      ),
-      // ── Confirm and Pay button ──────────────────────────────────────────
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: SizedBox(
-            width: double.infinity,
-            height: 54,
-            child: ElevatedButton(
-              onPressed: _isLoading ? null : _submitBooking,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _blue,
-                disabledBackgroundColor: Colors.blue.shade200,
-                elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-              ),
-              child: Text(
-                'Confirm and Pay • ${_formatPrice(grandTotal)}',
-                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
-              ),
-            ),
-          ),
+    // E-receipt via the backend (shared with web `/booking-receipt`).
+    try {
+      await ApiService.generateReceipt(
+        bookingCode: bookingCode,
+        guestName: guestName,
+        propertyName: widget.destination.name,
+        propertyAddress:
+            '${widget.destination.area}, ${widget.destination.city}',
+        checkIn: _checkInIso(),
+        checkOut: _checkOutIso(),
+        totalPrice: grandTotal,
+      );
+    } catch (_) {}
+
+    if (!mounted) return;
+    _bookingCompleted = true;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BookingSuccessScreen(
+          destination: widget.destination,
+          selectedDatesText: _currentDatesText,
+          numNights: _currentNumNights,
+          guestName: guestName,
+          guestPhone: _phoneCtrl.text.trim().isNotEmpty
+              ? _phoneCtrl.text.trim()
+              : (UserSession.userPhone ?? ''),
+          paymentMethod: _selectedPaymentMethod,
+          bookingCode: bookingCode,
+          selectedRoomNumber: widget.selectedRoomNumber,
+          paymentTime: paymentTimeStr,
+          total: grandTotal,
+          roomTotal: roomTotal,
+          fee: fee,
+          guestEmail: guestEmail,
+          paymentPhone: _phoneCtrl.text.trim(),
+          paid: payStatus.toLowerCase() == 'paid',
+          paymentStatus: payStatus,
         ),
       ),
-    );
-  }
-
-  // ── Hotel card ─────────────────────────────────────────────────────────────
-  Widget _screenshotHotelCard() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 12, offset: const Offset(0, 3))],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.asset(widget.destination.imageUrl, width: 80, height: 80, fit: BoxFit.cover),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Name + star rating
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        widget.destination.name,
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.black87),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Icon(Icons.star_rounded, size: 14, color: Color(0xFFFFC107)),
-                    const SizedBox(width: 2),
-                    Text(
-                      widget.destination.rating.toStringAsFixed(1),
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.black87),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                // Location in blue
-                Row(
-                  children: [
-                    Icon(Icons.location_on, size: 12, color: Colors.blue.shade500),
-                    const SizedBox(width: 3),
-                    Expanded(
-                      child: Text(
-                        '${widget.destination.area}, ${widget.destination.city}',
-                        style: TextStyle(fontSize: 12, color: Colors.blue.shade500, fontWeight: FontWeight.w500),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                // Price + Super Host
-                Row(
-                  children: [
-                    Text(
-                      _formatPrice(widget.destination.price),
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Colors.black87),
-                    ),
-                    Text(
-                      '/night',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                    ),
-                    const SizedBox(width: 14),
-                    Text(
-                      'Super Host',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Trip Overview card ─────────────────────────────────────────────────────
-  Widget _screenshotTripCard() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 3))],
-      ),
-      child: Column(
-        children: [
-          _screenshotTripRow(
-            icon: Icons.calendar_today_outlined,
-            label: 'Dates',
-            value: '$_currentDatesText ($_currentNumNights night${_currentNumNights > 1 ? 's' : ''})',
-            onEdit: _selectDates,
-          ),
-          Container(height: 1, margin: const EdgeInsets.symmetric(horizontal: 16), color: const Color(0xFFF0F0F0)),
-          _screenshotTripRow(
-            icon: Icons.person_outline,
-            label: 'Guests',
-            value: '$_currentGuestsCount Guest${_currentGuestsCount > 1 ? 's' : ''}',
-            onEdit: _editGuests,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _screenshotTripRow({
-    required IconData icon,
-    required String label,
-    required String value,
-    required VoidCallback onEdit,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(color: const Color(0xFFF3F3F3), borderRadius: BorderRadius.circular(10)),
-            child: Icon(icon, size: 18, color: Colors.black54),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87)),
-                const SizedBox(height: 2),
-                Text(value, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-              ],
-            ),
-          ),
-          GestureDetector(
-            onTap: onEdit,
-            child: Text(
-              'Edit',
-              style: TextStyle(fontSize: 13.5, color: Colors.blue.shade700, fontWeight: FontWeight.w600, decoration: TextDecoration.underline),
-            ),
-          ),
-        ],
-      ),
+      (route) => route.isFirst,
     );
   }
 
@@ -1190,35 +672,51 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: const ColorScheme.light(
-              primary: Color(0xFF1E88E5),
+              primary: Color(0xFF0F62FE),
               onPrimary: Colors.white,
               surface: Colors.white,
               onSurface: Colors.black87,
             ),
           ),
-          child: child!,
+          child: child ?? const SizedBox.shrink(),
         );
       },
     );
 
     if (picked != null) {
       final nights = picked.end.difference(picked.start).inDays;
-      final startMonth = _getMonthAbbr(picked.start.month);
-      final endMonth = _getMonthAbbr(picked.end.month);
+      const months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      ];
+      final startMonth = months[picked.start.month - 1];
+      final endMonth = months[picked.end.month - 1];
       final formattedDates = picked.start.month == picked.end.month
           ? '$startMonth ${picked.start.day} – ${picked.end.day}'
           : '$startMonth ${picked.start.day} – $endMonth ${picked.end.day}';
 
+      HapticFeedback.selectionClick();
       setState(() {
         _currentNumNights = nights > 0 ? nights : 1;
         _currentDatesText = formattedDates;
       });
+      _fetchQuote();
     }
   }
 
-  String _getMonthAbbr(int month) {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return months[month - 1];
+  String _timerText() {
+    final s = _remainingSeconds.clamp(0, 359999);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(s ~/ 3600)}:${two((s % 3600) ~/ 60)}:${two(s % 60)}';
+  }
+
+  String _fmtFull(DateTime d) {
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${weekdays[d.weekday - 1]}, ${months[d.month - 1]} ${d.day}, ${d.year}';
   }
 
   void _editGuests() {
@@ -1226,12 +724,13 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setModalState) {
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1240,56 +739,93 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
                     child: Container(
                       width: 40,
                       height: 4,
-                      decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+                      decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(2)),
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Text('Guests & Occupancy', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
-                  const SizedBox(height: 20),
+                  const Text('Guests & Occupancy',
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: _ink)),
+                  const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Total Guests', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black87)),
-                          Text('Adults and children', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                          Text('Total Guests',
+                              style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  color: _ink)),
+                          Text('Adults and children',
+                              style: TextStyle(
+                                  fontSize: 12, color: _muted)),
                         ],
                       ),
                       Row(
                         children: [
                           IconButton(
-                            onPressed: tempGuests > 1 ? () => setModalState(() => tempGuests--) : null,
-                            icon: const Icon(Icons.remove_circle_outline, size: 28),
-                            color: const Color(0xFF1E88E5),
+                            onPressed: tempGuests > 1
+                                ? () =>
+                                    setModalState(() => tempGuests--)
+                                : null,
+                            icon: const Icon(
+                                Icons.remove_circle_outline,
+                                size: 28),
+                            color: const Color(0xFF0F62FE),
                           ),
-                          Text(
-                            '$tempGuests',
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                          SizedBox(
+                            width: 28,
+                            child: Text('$tempGuests',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: _ink)),
                           ),
                           IconButton(
-                            onPressed: tempGuests < 10 ? () => setModalState(() => tempGuests++) : null,
-                            icon: const Icon(Icons.add_circle_outline, size: 28),
-                            color: const Color(0xFF1E88E5),
+                            onPressed: tempGuests < 10
+                                ? () =>
+                                    setModalState(() => tempGuests++)
+                                : null,
+                            icon: const Icon(Icons.add_circle_outline,
+                                size: 28),
+                            color: const Color(0xFF0F62FE),
                           ),
                         ],
                       ),
                     ],
                   ),
-                  const SizedBox(height: 24),
-                  ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        _currentGuestsCount = tempGuests;
-                      });
-                      Navigator.pop(ctx);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1E88E5),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                      minimumSize: const Size(double.infinity, 50),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        HapticFeedback.selectionClick();
+                        setState(() {
+                          _currentGuestsCount = tempGuests;
+                        });
+                        Navigator.pop(ctx);
+                        _fetchQuote();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _blue,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: const Text('Save Changes',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600)),
                     ),
-                    child: const Text('Save Changes', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                   ),
                 ],
               ),
@@ -1300,36 +836,113 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
     );
   }
 
-  // ── Billing Details card ───────────────────────────────────────────────────
-  Widget _screenshotBillingCard(int roomTotal, int vatTotal, int grandTotal) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 3))],
+  // ───────────────────────── build ─────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final d = widget.destination;
+    return Scaffold(
+      backgroundColor: _pageBg,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        iconTheme: const IconThemeData(color: _ink),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
-      child: Column(
+      body: Stack(
         children: [
-          _screenshotBillingRow(
-            '$_currentNumNights night${_currentNumNights > 1 ? 's' : ''}',
-            _formatPrice(roomTotal),
+          SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _stepper(),
+                _timerBar(),
+                _summaryCard(d),
+                const SizedBox(height: 14),
+                _paymentCard(),
+                if (_receiptEmail.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  _emailNote(),
+                ],
+                const SizedBox(height: 14),
+                _payCard(),
+                const SizedBox(height: 12),
+                const Center(
+                  child: Text.rich(
+                    TextSpan(
+                      style:
+                          TextStyle(fontSize: 12, color: _muted, height: 1.5),
+                      children: [
+                        TextSpan(
+                            text:
+                                'By confirming, you agree to FastNet Stays\' '),
+                        TextSpan(
+                            text: 'Terms of Use',
+                            style: TextStyle(color: _blue)),
+                        TextSpan(text: ' and '),
+                        TextSpan(
+                            text: 'Privacy Policy',
+                            style: TextStyle(color: _blue)),
+                        TextSpan(text: '.'),
+                      ],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          _screenshotBillingRow('Vat', _formatPrice(vatTotal)),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Divider(height: 1, color: Color(0xFFEEEEEE)),
+          if (_isLoading) _loadingOverlay(),
+        ],
+      ),
+    );
+  }
+
+  /// Compact mobile stepper (web `.agoda-checkout-stepper` mobile).
+  Widget _stepper() {
+    return Container(
+      color: Colors.white,
+      padding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: const Color(0xFFBFDBFE)),
+            ),
+            child: const Text('Step 2 of 3',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: _blue)),
           ),
-          // Total row — larger text
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          const SizedBox(width: 10),
+          const Text('Payment information',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _ink)),
+          const Spacer(),
+          const Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Total', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.black87)),
-              Text(
-                _formatPrice(grandTotal),
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.black87),
-              ),
+              Icon(Icons.verified_user_outlined,
+                  size: 14, color: _green),
+              SizedBox(width: 4),
+              Text('Secure',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: _muted)),
             ],
           ),
         ],
@@ -1337,816 +950,889 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
     );
   }
 
-  Widget _screenshotBillingRow(String label, String amount) {
+  /// Price-guarantee countdown (web `.agoda-timer-bar`).
+  Widget _timerBar() {
+    if (_holdExpired) {
+      return Container(
+        width: double.infinity,
+        padding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: const BoxDecoration(
+          color: _dangerBg,
+          border: Border(
+              bottom: BorderSide(color: _dangerBorder)),
+        ),
+        child: const Text(
+          'Price guarantee expired — go back to refresh the live price.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: _dangerFg),
+        ),
+      );
+    }
+    return Container(
+      width: double.infinity,
+      padding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: const BoxDecoration(
+        color: _timerBg,
+        border: Border(
+            bottom: BorderSide(color: _timerBorder)),
+      ),
+      child: RichText(
+        textAlign: TextAlign.center,
+        text: TextSpan(
+          style: const TextStyle(
+              fontSize: 13, color: _timerFg, height: 1.4),
+          children: [
+            const TextSpan(text: 'This price is guaranteed for... '),
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.schedule_rounded,
+                      size: 13, color: _timerStrong),
+                  const SizedBox(width: 4),
+                  Text(_timerText(),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: _timerStrong)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Stay & price summary (web right column, stacked first on mobile).
+  Widget _summaryCard(Destination d) {
+    final stars = d.starRating.clamp(0, 5);
+    final ci = _stayDates().start;
+    final co = _stayDates().end;
+    final roomTitle = 'Room ${widget.selectedRoomNumber}';
+    final metaBits = [
+      if (d.roomType.trim().isNotEmpty) d.roomType.trim(),
+      'Max $_currentGuestsCount adult${_currentGuestsCount == 1 ? '' : 's'}',
+    ];
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: _cardBorder, width: 1.5),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Hotel row.
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: SizedBox(
+                    width: 68,
+                    height: 68,
+                    child: PropertyImage(
+                        url: d.imageUrl, fit: BoxFit.cover),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(d.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w700,
+                              color: _ink,
+                              height: 1.3)),
+                      if (stars > 0)
+                        Text(
+                          '★★★★★'.substring(0, stars) +
+                              '☆☆☆☆☆'.substring(0, 5 - stars),
+                          style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFFB7791F),
+                              letterSpacing: 1),
+                        ),
+                      if (d.rating > 0)
+                        Text(
+                          '${d.rating.toStringAsFixed(1)} Excellent · ${d.reviewCount} reviews',
+                          style: const TextStyle(
+                              fontSize: 12, color: _body),
+                        ),
+                      Text('${d.area}, ${d.city}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 11.5, color: _muted)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Dates row.
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 14, vertical: 10),
+            decoration: const BoxDecoration(
+              color: _boxBg,
+              border: Border(
+                top: BorderSide(color: _hairline),
+                bottom: BorderSide(color: _hairline),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('CHECK-IN',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: _muted,
+                              letterSpacing: 0.36)),
+                      Text(_fmtFull(ci),
+                          style: const TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                              color: _ink)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.arrow_right_alt_rounded,
+                    size: 16, color: _faint),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('CHECK-OUT',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: _muted,
+                              letterSpacing: 0.36)),
+                      Text(_fmtFull(co),
+                          style: const TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w700,
+                              color: _ink)),
+                    ],
+                  ),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text('$_currentNumNights Night${_currentNumNights == 1 ? '' : 's'}',
+                        style: const TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                            color: _ink)),
+                    GestureDetector(
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        _selectDates();
+                      },
+                      child: const Text('Change',
+                          style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: _blue,
+                              decoration:
+                                  TextDecoration.underline)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          // Room + guests row.
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('1 × $roomTitle',
+                    style: const TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: _ink)),
+                const SizedBox(height: 2),
+                Text(metaBits.join(' · '),
+                    style: const TextStyle(
+                        fontSize: 12, color: _muted)),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    _editGuests();
+                  },
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.person_outline_rounded,
+                          size: 14, color: _blue),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$_currentGuestsCount Guest${_currentGuestsCount == 1 ? '' : 's'} · Edit',
+                        style: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: _blue),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Price breakdown.
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: _hairline)),
+            ),
+            child: Column(
+              children: [
+                _priceRow(
+                  '1 × Room ($_currentNumNights night${_currentNumNights == 1 ? '' : 's'})',
+                  _formatPrice(_roomPrice.round()),
+                ),
+                const SizedBox(height: 8),
+                _priceRow(
+                  'Mobile-money processing (1%)',
+                  _formatPrice(_fee.round()),
+                ),
+                const SizedBox(height: 8),
+                const Row(
+                  mainAxisAlignment:
+                      MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Taxes & fees',
+                        style: TextStyle(
+                            fontSize: 13, color: _body)),
+                    Text('Included',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: _green)),
+                  ],
+                ),
+                Container(
+                  margin: const EdgeInsets.only(top: 10),
+                  padding: const EdgeInsets.only(top: 10),
+                  decoration: const BoxDecoration(
+                    border: Border(
+                        top: BorderSide(
+                            color: _cardBorder,
+                            width: 1.5,
+                            style: BorderStyle.solid)),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment:
+                        MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Total Price',
+                          style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: _ink)),
+                    ],
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: _quoteLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: _blue),
+                        )
+                      : Text(
+                          _formatPrice(_total.round()),
+                          style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: _blue),
+                        ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Includes 1% AzamPay mobile fee · Instant confirmation',
+                  style: TextStyle(
+                      fontSize: 11.5, color: _muted, height: 1.4),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _priceRow(String label, String amount) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: TextStyle(fontSize: 14, color: Colors.grey.shade700)),
-        Text(amount, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black87)),
+        Expanded(
+          child: Text(label,
+              style:
+                  const TextStyle(fontSize: 13, color: _body)),
+        ),
+        Text(amount,
+            style:
+                const TextStyle(fontSize: 13, color: _body)),
       ],
     );
   }
 
-  // ── Payment icons row ──────────────────────────────────────────────────────
-  Widget _screenshotPaymentRow() {
-    final methods = [
-      {'name': 'Vodacom M-Pesa', 'asset': 'assets/images/vodacom_logo.png', 'label': 'M-Pesa'},
-      {'name': 'Tigo Pesa', 'asset': 'assets/images/mix by yas.jpg', 'label': 'Tigo Pesa'},
-      {'name': 'Airtel Money', 'asset': 'assets/images/airtel logo.png', 'label': 'Airtel'},
-      {'name': 'Halotel HaloPesa', 'asset': 'assets/images/halotel_logo.jpg', 'label': 'HaloPesa'},
-      {'name': 'Mastercard', 'asset': 'assets/images/mastercard-logo.png', 'label': 'Mastercard'},
-      {'name': 'Visa Card', 'asset': 'assets/images/VISA_LOGO.png', 'label': 'Visa'},
-    ];
+  // ── Payment card (web left column) ──
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: methods.map((m) {
-          final name = m['name']!;
-          final asset = m['asset']!;
-          final label = m['label']!;
-          final isSelected = _selectedPaymentMethod == name;
-
-          return Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: _screenshotPayChip(
-              selected: isSelected,
-              onTap: () => setState(() => _selectedPaymentMethod = name),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: Image.asset(
-                      asset,
-                      height: 22,
-                      width: 32,
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                      color: isSelected ? Colors.black87 : Colors.grey.shade700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }).toList(),
-      ),
+  Widget _paymentCard() {
+    final method = _methods.firstWhere(
+      (m) => m['key'] == _selectedPaymentMethod,
+      orElse: () => _methods.first,
     );
-  }
-
-  Widget _screenshotPayChip({required bool selected, required VoidCallback onTap, required Widget child}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected ? _blue : const Color(0xFFE0E0E0),
-            width: selected ? 1.8 : 1.0,
-          ),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
-        ),
-        child: child,
-      ),
-    );
-  }
-
-  // ── Dynamic payment inputs card ────────────────────────────────────────────
-  Widget _screenshotInputsCard() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2))],
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: _cardBorder, width: 1.5),
       ),
-      child: _buildDynamicPaymentInputs(),
-    );
-  }
-
-  // ── Loading overlay ────────────────────────────────────────────────────────
-  Widget _screenshotLoadingOverlay() {
-    return Container(
-      color: Colors.black.withValues(alpha: 0.42),
-      child: Center(
-        child: Container(
-          width: 290,
-          padding: const EdgeInsets.all(26),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 24)],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                SizedBox(width: 18, height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2.5, color: _blue)),
-                const SizedBox(width: 14),
-                const Text('Processing payment…', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: Colors.black87)),
-              ]),
-              const SizedBox(height: 22),
-              _buildLoadingProgressItem(text: 'Checking availability', isActive: _loadingStep == 0, isDone: _loadingStep > 0),
-              const SizedBox(height: 14),
-              _buildLoadingProgressItem(text: 'Confirming payment',    isActive: _loadingStep == 1, isDone: _loadingStep > 1),
-              const SizedBox(height: 14),
-              _buildLoadingProgressItem(text: 'Preparing confirmation', isActive: _loadingStep == 2, isDone: _loadingStep > 2),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-
-
-  Widget _buildTripDetailRow(String label, String value, IconData icon) {
-    return Row(
-      children: [
-        Icon(icon, color: Colors.grey.shade700, size: 20),
-        const SizedBox(width: 14),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              value,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCheckoutStepper(int currentStep) {
-    return Row(
-      children: List.generate(5, (index) {
-        if (index % 2 == 1) {
-          return Expanded(
-            child: Divider(
-              color: index < currentStep * 2 ? Colors.red.shade900 : Colors.grey.shade300,
-              thickness: 2,
-            ),
-          );
-        }
-        final stepIdx = index ~/ 2;
-        final isActive = stepIdx <= currentStep;
-        final isCompleted = stepIdx < currentStep;
-        return Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            color: isActive ? Colors.red.shade900 : Colors.grey.shade100,
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: isActive ? Colors.red.shade900 : Colors.grey.shade300,
-              width: 2,
-            ),
-          ),
-          child: Center(
-            child: isCompleted
-                ? const Icon(Icons.check, color: Colors.white, size: 16)
-                : Text(
-                    '${stepIdx + 1}',
-                    style: TextStyle(
-                      color: isActive ? Colors.white : Colors.grey.shade600,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                    ),
-                  ),
-          ),
-        );
-      }),
-    );
-  }
-
-  InputDecoration _buildInputDecoration(String label, String hint, IconData icon) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      hintStyle: TextStyle(color: Colors.grey.shade400),
-      filled: true,
-      fillColor: Colors.grey.shade50,
-      prefixIcon: Icon(icon, color: Colors.black54),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.red.shade900, width: 1.5),
-      ),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-    );
-  }
-
-  Widget _buildDynamicPaymentInputs() {
-    if (_selectedPaymentMethod == 'Mastercard / Visa' || _selectedPaymentMethod == 'Mastercard' || _selectedPaymentMethod == 'Visa Card') {
-      final isMastercard = _selectedPaymentMethod == 'Mastercard';
-      final cardAsset = isMastercard ? 'assets/images/mastercard-logo.png' : 'assets/images/VISA_LOGO.png';
-      final cardName = isMastercard ? 'Mastercard' : 'Visa Card';
-
-      return Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Form Input Fields ─────────────────────────────────────────────
-          Text('$cardName Details', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _cardNoController,
-            keyboardType: TextInputType.number,
-            maxLength: 16,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black87, letterSpacing: 1),
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              labelText: 'Card Number',
-              hintText: '4000 1234 5678 9010',
-              counterText: '',
-              filled: true,
-              fillColor: Colors.grey.shade50,
-              prefixIcon: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Image.asset(cardAsset, width: 22, height: 22, fit: BoxFit.contain),
+          const Text('Payment method',
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: _ink)),
+          const SizedBox(height: 4),
+          const Row(
+            children: [
+              Icon(Icons.shield_outlined, size: 14, color: _green),
+              SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  '256-bit SSL encrypted & secure mobile payment',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: _green),
+                ),
               ),
-              suffixIcon: const Icon(Icons.lock_rounded, size: 16, color: Color(0xFF10B981)),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFF1E88E5), width: 1.5),
-              ),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Text('Select your mobile network',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: _body)),
+          const SizedBox(height: 10),
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate:
+                const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 2.6,
             ),
-            validator: (value) {
-              if (value == null || value.length != 16 || int.tryParse(value) == null) {
-                return 'Enter a valid 16-digit card number';
-              }
-              return null;
+            itemCount: _methods.length,
+            itemBuilder: (_, i) {
+              final m = _methods[i];
+              final selected = m['key'] == _selectedPaymentMethod;
+              return _payTile(
+                title: m['title']!,
+                sub: m['sub']!,
+                asset: m['asset']!,
+                selected: selected,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  setState(
+                      () => _selectedPaymentMethod = m['key']!);
+                },
+              );
             },
           ),
           const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: TextFormField(
-                  controller: _expiryController,
-                  keyboardType: TextInputType.datetime,
-                  maxLength: 5,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black87),
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: 'Expiry Date',
-                    hintText: 'MM/YY',
-                    counterText: '',
-                    filled: true,
-                    fillColor: Colors.grey.shade50,
-                    prefixIcon: const Icon(Icons.calendar_month_outlined, size: 20),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _boxBg,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: _cardBorder),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Pay with ${method['title']} (${method['sub']})',
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: _ink)),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 13),
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        border: Border(
+                          top: BorderSide(
+                              color: _cardBorder, width: 1.5),
+                          left: BorderSide(
+                              color: _cardBorder, width: 1.5),
+                          bottom: BorderSide(
+                              color: _cardBorder, width: 1.5),
+                        ),
+                        borderRadius: BorderRadius.only(
+                          topLeft: Radius.circular(6),
+                          bottomLeft: Radius.circular(6),
+                        ),
+                      ),
+                      child: const Text('+255',
+                          style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              color: _body)),
                     ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Color(0xFF1E88E5), width: 1.5),
+                    Expanded(
+                      child: TextField(
+                        controller: _phoneCtrl,
+                        focusNode: _phoneFocus,
+                        keyboardType: TextInputType.phone,
+                        style: const TextStyle(
+                            fontSize: 16, color: _ink),
+                        decoration: const InputDecoration(
+                          hintText: '712 345 678',
+                          hintStyle: TextStyle(
+                              fontSize: 14, color: _faint),
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding: EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 12),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.only(
+                              topRight: Radius.circular(6),
+                              bottomRight: Radius.circular(6),
+                            ),
+                            borderSide: BorderSide(
+                                color: _cardBorder, width: 1.5),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.only(
+                              topRight: Radius.circular(6),
+                              bottomRight: Radius.circular(6),
+                            ),
+                            borderSide: BorderSide(
+                                color: _cardBorder, width: 1.5),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.only(
+                              topRight: Radius.circular(6),
+                              bottomRight: Radius.circular(6),
+                            ),
+                            borderSide: BorderSide(
+                                color: _blue, width: 1.5),
+                          ),
+                        ),
+                        onChanged: (_) {
+                          if (_formError != null) {
+                            setState(() => _formError = null);
+                          }
+                        },
+                      ),
                     ),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.trim().length != 5 || !value.contains('/')) {
-                      return 'Enter MM/YY';
-                    }
-                    return null;
-                  },
+                  ],
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: TextFormField(
-                  controller: _cvvController,
-                  keyboardType: TextInputType.number,
-                  obscureText: true,
-                  maxLength: 3,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black87),
-                  decoration: InputDecoration(
-                    labelText: 'CVV / CVC',
-                    hintText: '123',
-                    counterText: '',
-                    filled: true,
-                    fillColor: Colors.grey.shade50,
-                    prefixIcon: const Icon(Icons.shield_outlined, size: 20),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.info_outline_rounded,
+                        size: 14, color: _blue),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'You will receive a USSD prompt on your phone to authorize payment. ${method['title']} selected.',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            color: _muted,
+                            height: 1.4),
+                      ),
                     ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Color(0xFF1E88E5), width: 1.5),
-                    ),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.length != 3 || int.tryParse(value) == null) {
-                      return 'Enter 3 digits';
-                    }
-                    return null;
-                  },
+                  ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.verified_user_outlined, size: 14, color: Colors.grey.shade600),
-              const SizedBox(width: 4),
-              Text(
-                'Guaranteed safe & 256-bit SSL encrypted checkout',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+          if (!_loggedIn) ...[
+            const SizedBox(height: 14),
+            const Text('Guest details',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: _body)),
+            const SizedBox(height: 8),
+            _guestField(
+              controller: _guestNameCtrl,
+              hint: 'Full name',
+              keyboardType: TextInputType.name,
+            ),
+            const SizedBox(height: 8),
+            _guestField(
+              controller: _guestEmailCtrl,
+              hint: 'Email address',
+              keyboardType: TextInputType.emailAddress,
+              onChanged: (_) => setState(() {}),
+            ),
+          ] else ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: _boxBg,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: _hairline),
               ),
-            ],
-          ),
-        ],
-      );
-    } else if (_selectedPaymentMethod == 'CRDB Bank') {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('CRDB Account Information', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _crdbAccController,
-            keyboardType: TextInputType.number,
-            maxLength: 15,
-            decoration: _buildInputDecoration('CRDB Account Number', 'e.g., 0152345678900', Icons.account_balance_wallet_outlined),
-            validator: (value) {
-              if (value == null || value.length < 10 || value.length > 15 || int.tryParse(value) == null) {
-                return 'Enter a valid CRDB Account Number';
-              }
-              return null;
-            },
-          ),
-        ],
-      );
-    } else {
-      final operatorAsset = _getSelectedOperatorAsset();
-
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('$_selectedPaymentMethod Number', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _mobileWalletPhoneController,
-            keyboardType: TextInputType.phone,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black87),
-            decoration: InputDecoration(
-              labelText: 'Phone Number',
-              hintText: '2557XXXXXXXX',
-              hintStyle: TextStyle(color: Colors.grey.shade400, fontWeight: FontWeight.normal),
-              filled: true,
-              fillColor: Colors.grey.shade50,
-              prefixIcon: operatorAsset != null
-                  ? Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Image.asset(operatorAsset, width: 22, height: 22, fit: BoxFit.contain),
-                    )
-                  : const Icon(Icons.phone_android_outlined),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Color(0xFF1E88E5), width: 1.5),
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+              child: Row(
+                children: [
+                  const Icon(Icons.person_outline_rounded,
+                      size: 16, color: _muted),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${UserSession.userName ?? 'Guest'} · ${UserSession.userEmail ?? ''}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 12.5, color: _body),
+                    ),
+                  ),
+                ],
               ),
             ),
-            validator: (value) {
-              final val = value?.trim() ?? '';
-              if (val.isEmpty || val.length < 9) {
-                return 'Enter a valid phone number';
-              }
-              return null;
-            },
-          ),
+          ],
         ],
-      );
-    }
-  }
-
-  String? _getSelectedOperatorAsset() {
-    final match = _paymentOptions.firstWhere(
-      (opt) => opt['name'] == _selectedPaymentMethod,
-      orElse: () => <String, dynamic>{},
-    );
-    return match['asset'] as String?;
-  }
-
-  Widget _buildDesktopWebView(BuildContext context) {
-    final d = widget.destination;
-    final roomTotal = d.price * _currentNumNights;
-    final vatTotal = (roomTotal * 0.125).round();
-    final grandTotal = roomTotal + vatTotal;
-
-    final formattedRoomTotal = 'TZS ${roomTotal.toString().replaceAllMapped(RegExp(r"(\d)(?=(\d{3})+(?!\d))"), (m) => "${m[1]},")}';
-    final formattedVatTotal = 'TZS ${vatTotal.toString().replaceAllMapped(RegExp(r"(\d)(?=(\d{3})+(?!\d))"), (m) => "${m[1]},")}';
-    final formattedGrandTotal = 'TZS ${grandTotal.toString().replaceAllMapped(RegExp(r"(\d)(?=(\d{3})+(?!\d))"), (m) => "${m[1]},")}';
-
-    final minutes = _remainingSeconds ~/ 60;
-    final seconds = _remainingSeconds % 60;
-    final timerText = '$minutes:${seconds.toString().padLeft(2, "0")}';
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F2),
-      appBar: WebTopHeader(
-        selectedIndex: 0,
-        onTabSelected: (idx) {
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (context) => MainScreen(initialTab: idx)),
-            (route) => false,
-          );
-        },
       ),
-      body: _isLoading
-          ? Center(
+    );
+  }
+
+  Widget _payTile({
+    required String title,
+    required String sub,
+    required String asset,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFEFF6FF) : _boxBg,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+              color: selected ? _blue : _cardBorder, width: 1.5),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                      color: _blue.withValues(alpha: 0.25),
+                      blurRadius: 0,
+                      spreadRadius: 1)
+                ]
+              : null,
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 18,
+              height: 18,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(3),
+                border: Border.all(
+                    color: selected ? _blue : _cardBorder,
+                    width: 1.5),
+                color:
+                    selected ? _blue : Colors.white,
+              ),
+              child: selected
+                  ? const Icon(Icons.check_rounded,
+                      size: 12, color: Colors.white)
+                  : null,
+            ),
+            const SizedBox(width: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: SizedBox(
+                width: 36,
+                height: 24,
+                child: Image.asset(
+                  asset,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(
+                      Icons.smartphone_rounded,
+                      size: 18,
+                      color: _muted),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const CircularProgressIndicator(color: Color(0xFF003580)),
-                  const SizedBox(height: 16),
-                  Text(
-                    _loadingStep == 0
-                        ? 'Verifying room lock status...'
-                        : _loadingStep == 1
-                            ? 'Processing secure transaction...'
-                            : 'Finalizing booking receipt details...',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                ],
-              ),
-            )
-          : SingleChildScrollView(
-              child: Column(
-                children: [
-                  // Hold Timer Bar
-                  Container(
-                    color: const Color(0xFFFFB700),
-                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 48),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.timer, size: 16, color: Colors.black87),
-                        const SizedBox(width: 8),
-                        Text(
-                          'We are holding this room for you. Complete checkout in $timerText',
-                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87, fontSize: 13),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // Header Back Bar
-                  Container(
-                    color: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 16),
-                    child: Row(
-                      children: [
-                        TextButton.icon(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.arrow_back, size: 16, color: Color(0xFF006CE4)),
-                          label: const Text('Back to room selection', style: TextStyle(color: Color(0xFF006CE4), fontWeight: FontWeight.bold)),
-                        ),
-                        const Spacer(),
-                        const Text(
-                          'Secure Checkout',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.black87),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Constrained Columns Split Layout
-                  Container(
-                    constraints: const BoxConstraints(maxWidth: 1000),
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Left Columns - Guest Details & Payment Inputs
-                        Expanded(
-                          flex: 3,
-                          child: Form(
-                            key: _formKey,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Step 1: Guest Details
-                                const Text('Step 1: Guest Information', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 16),
-                                Container(
-                                  padding: const EdgeInsets.all(24),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: Colors.grey.shade200),
-                                  ),
-                                  child: Column(
-                                    children: [
-                                      TextFormField(
-                                        initialValue: UserSession.userName ?? '',
-                                        decoration: const InputDecoration(
-                                          labelText: 'Full Name',
-                                          border: OutlineInputBorder(),
-                                          prefixIcon: Icon(Icons.person_outline),
-                                        ),
-                                        validator: (val) {
-                                          if (val == null || val.trim().isEmpty) return 'Enter your name';
-                                          return null;
-                                        },
-                                      ),
-                                      const SizedBox(height: 16),
-                                      TextFormField(
-                                        initialValue: UserSession.userEmail ?? '',
-                                        decoration: const InputDecoration(
-                                          labelText: 'Email Address',
-                                          border: OutlineInputBorder(),
-                                          prefixIcon: Icon(Icons.email_outlined),
-                                        ),
-                                        validator: (val) {
-                                          if (val == null || val.trim().isEmpty) return 'Enter email';
-                                          return null;
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 32),
-
-                                // Step 2: Payment Details
-                                const Text('Step 2: Choose Payment Method', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 16),
-                                Container(
-                                  padding: const EdgeInsets.all(24),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: Colors.grey.shade200),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      // Payment Options Grid Wrap
-                                      Wrap(
-                                        spacing: 12,
-                                        runSpacing: 12,
-                                        children: _paymentOptions.map((opt) {
-                                          final name = opt['name'] as String;
-                                          final isSelected = _selectedPaymentMethod == name;
-                                          return InkWell(
-                                            onTap: () {
-                                              setState(() {
-                                                _selectedPaymentMethod = name;
-                                              });
-                                            },
-                                            child: Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                              decoration: BoxDecoration(
-                                                color: isSelected ? const Color(0xFF003580).withValues(alpha: 0.05) : Colors.white,
-                                                borderRadius: BorderRadius.circular(8),
-                                                border: Border.all(
-                                                  color: isSelected ? const Color(0xFF003580) : Colors.grey.shade300,
-                                                  width: isSelected ? 2 : 1,
-                                                ),
-                                              ),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Icon(opt['icon'] as IconData, size: 16, color: isSelected ? const Color(0xFF003580) : Colors.black54),
-                                                  const SizedBox(width: 8),
-                                                  Text(name, style: TextStyle(fontSize: 13, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                                                ],
-                                              ),
-                                            ),
-                                          );
-                                        }).toList(),
-                                      ),
-                                      const SizedBox(height: 24),
-                                      const Divider(),
-                                      const SizedBox(height: 16),
-
-                                      // Mobile money configuration or Visa inputs
-                                      if (_selectedPaymentMethod.contains('Visa') || _selectedPaymentMethod.contains('Mastercard')) ...[
-                                        TextFormField(
-                                          controller: _cardNoController,
-                                          decoration: const InputDecoration(
-                                            labelText: 'Card Number',
-                                            border: OutlineInputBorder(),
-                                            prefixIcon: Icon(Icons.credit_card),
-                                          ),
-                                          keyboardType: TextInputType.number,
-                                        ),
-                                        const SizedBox(height: 16),
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: TextFormField(
-                                                controller: _expiryController,
-                                                decoration: const InputDecoration(
-                                                  labelText: 'Expiry Date (MM/YY)',
-                                                  border: OutlineInputBorder(),
-                                                ),
-                                              ),
-                                            ),
-                                            const SizedBox(width: 16),
-                                            Expanded(
-                                              child: TextFormField(
-                                                controller: _cvvController,
-                                                decoration: const InputDecoration(
-                                                  labelText: 'CVV',
-                                                  border: OutlineInputBorder(),
-                                                ),
-                                                keyboardType: TextInputType.number,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ] else ...[
-                                        TextFormField(
-                                          controller: _mobileWalletPhoneController,
-                                          decoration: const InputDecoration(
-                                            labelText: 'Mobile Wallet Number',
-                                            border: OutlineInputBorder(),
-                                            prefixText: '+',
-                                            prefixIcon: Icon(Icons.phone_android),
-                                          ),
-                                          keyboardType: TextInputType.phone,
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          'Enter wallet number (e.g. 25576XXXXXXX). A push notification will be sent to complete payments.',
-                                          style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 32),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 32),
-
-                        // Right Column: Summary Card
-                        Expanded(
-                          flex: 2,
-                          child: Container(
-                            padding: const EdgeInsets.all(24),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.grey.shade200),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.04),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  d.name,
-                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                                ),
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.location_on, size: 14, color: Colors.grey),
-                                    const SizedBox(width: 4),
-                                    Text('${d.area}, ${d.city}', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-                                  ],
-                                ),
-                                const SizedBox(height: 20),
-                                const Divider(),
-                                const SizedBox(height: 16),
-                                _summaryItem('Dates', _currentDatesText),
-                                _summaryItem('Stay length', '$_currentNumNights Nights'),
-                                _summaryItem('Room Number', 'Room ${widget.selectedRoomNumber}'),
-                                const SizedBox(height: 20),
-                                const Divider(),
-                                const SizedBox(height: 16),
-                                _priceRow('Room Total', formattedRoomTotal, false),
-                                _priceRow('VAT (12.5%)', formattedVatTotal, false),
-                                const SizedBox(height: 10),
-                                _priceRow('Grand Total', formattedGrandTotal, true),
-                                const SizedBox(height: 24),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: ElevatedButton(
-                                    onPressed: () {
-                                      if (_formKey.currentState?.validate() ?? false) {
-                                        _submitBooking();
-                                      }
-                                    },
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF006CE4),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(vertical: 16),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                                      elevation: 0,
-                                    ),
-                                    child: const Text('Complete Booking', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                const Center(
-                                  child: Text('Secure payment processing', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 64),
+                  Text(title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: _ink,
+                          height: 1.2)),
+                  Text(sub,
+                      style: const TextStyle(
+                          fontSize: 11, color: _muted)),
                 ],
               ),
             ),
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _summaryItem(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+  Widget _guestField({
+    required TextEditingController controller,
+    required String hint,
+    TextInputType keyboardType = TextInputType.text,
+    ValueChanged<String>? onChanged,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      style: const TextStyle(fontSize: 15, color: _ink),
+      onChanged: (v) {
+        if (_formError != null) {
+          setState(() => _formError = null);
+        }
+        onChanged?.call(v);
+      },
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle:
+            const TextStyle(fontSize: 14, color: _faint),
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14, vertical: 12),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(6),
+          borderSide:
+              const BorderSide(color: _cardBorder, width: 1.5),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(6),
+          borderSide:
+              const BorderSide(color: _cardBorder, width: 1.5),
+        ),
+        focusedBorder: const OutlineInputBorder(
+          borderRadius: BorderRadius.zero,
+          borderSide: BorderSide(color: _blue, width: 1.5),
+        ),
+      ),
+    );
+  }
+
+  Widget _emailNote() {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: _boxBg,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: _cardBorder, width: 1.5),
+      ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          const Icon(Icons.mail_outline_rounded,
+              size: 16, color: _blue),
+          const SizedBox(width: 10),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: const TextStyle(
+                    fontSize: 13, color: _body, height: 1.4),
+                children: [
+                  const TextSpan(
+                      text:
+                          "We'll send booking confirmation and digital receipt to "),
+                  TextSpan(
+                    text: _receiptEmail,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: _ink),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _priceRow(String label, String value, bool isGrand) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  Widget _payCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: _cardBorder, width: 1.5),
+      ),
+      child: Column(
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontWeight: isGrand ? FontWeight.bold : FontWeight.normal,
-              fontSize: isGrand ? 16 : 13,
-              color: isGrand ? Colors.black87 : Colors.grey.shade600,
+          if (_formError != null)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: _dangerBg,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: _dangerBorder),
+              ),
+              child: Text(_formError!,
+                  style: const TextStyle(
+                      fontSize: 12.5, color: _dangerFg)),
+            ),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed:
+                  (_isLoading || _holdExpired) ? null : _submitBooking,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _blue,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor:
+                    const Color(0xFFCBD5E1),
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.lock_rounded, size: 16),
+                  const SizedBox(width: 8),
+                  Text(
+                    _holdExpired
+                        ? 'PRICE EXPIRED'
+                        : 'Pay ${_formatPrice(_total.round())}',
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
             ),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: isGrand ? 18 : 13,
-              color: isGrand ? const Color(0xFF003580) : Colors.black87,
-            ),
+          const SizedBox(height: 8),
+          const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.bolt_rounded, size: 13, color: _green),
+              SizedBox(width: 4),
+              Text('Instant payment processing via AzamPay',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _green)),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _loadingOverlay() {
+    final steps = [
+      'Securing your room…',
+      'Creating your booking…',
+      'Requesting the mobile-money prompt…',
+    ];
+    final label = steps[_loadingStep.clamp(0, steps.length - 1)];
+    return Container(
+      color: Colors.black.withValues(alpha: 0.35),
+      alignment: Alignment.center,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 48),
+        padding: const EdgeInsets.symmetric(
+            horizontal: 24, vertical: 28),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 32,
+              height: 32,
+              child: CircularProgressIndicator(
+                  strokeWidth: 3, color: _blue),
+            ),
+            const SizedBox(height: 16),
+            Text(label,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: _ink)),
+            const SizedBox(height: 6),
+            const Text(
+              'Keep this screen open and approve the prompt on your phone.',
+              textAlign: TextAlign.center,
+              style:
+                  TextStyle(fontSize: 12, color: _muted, height: 1.4),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
+/// Booking confirmation — mobile layout of web `/bookingpage-success`
+/// (22px title, burnt-orange reference, dashed detail grid, pill
+/// actions). Paid shows the blue check card; pending shows the amber
+/// hourglass card with a nudge to finish payment from My bookings.
 class BookingSuccessScreen extends StatefulWidget {
   final Destination destination;
   final String selectedDatesText;
@@ -2157,6 +1843,14 @@ class BookingSuccessScreen extends StatefulWidget {
   final String bookingCode;
   final String selectedRoomNumber;
   final String? paymentTime;
+
+  final double? total;
+  final double? roomTotal;
+  final double? fee;
+  final String? guestEmail;
+  final String? paymentPhone;
+  final bool paid;
+  final String paymentStatus;
 
   const BookingSuccessScreen({
     Key? key,
@@ -2169,6 +1863,13 @@ class BookingSuccessScreen extends StatefulWidget {
     required this.bookingCode,
     required this.selectedRoomNumber,
     this.paymentTime,
+    this.total,
+    this.roomTotal,
+    this.fee,
+    this.guestEmail,
+    this.paymentPhone,
+    this.paid = true,
+    this.paymentStatus = 'paid',
   }) : super(key: key);
 
   @override
@@ -2176,55 +1877,67 @@ class BookingSuccessScreen extends StatefulWidget {
 }
 
 class _BookingSuccessScreenState extends State<BookingSuccessScreen> {
-  static const Color _bookingNavy = Color(0xFF003580);
-  static const Color _bookingBlue = Color(0xFF006CE4);
-  static const Color _bookingGreen = Color(0xFF008009);
-  static const Color _bgGrey = Color(0xFFF5F5F5);
+  static const _ink = Color(0xFF1A1D25);
+  static const _muted = Color(0xFF5F6368);
+  static const _pageBg = Color(0xFFF4F4F4);
+  static const _border = Color(0xFFE8EAED);
+  static const _blue = Color(0xFF0F62FE);
+  static const _burnt = Color(0xFFC2410C);
+  static const _amberBg = Color(0xFFFEF3C7);
+  static const _amberBorder = Color(0xFFFDE68A);
+  static const _amberFg = Color(0xFFB45309);
+  static const _blueTint = Color(0xFFEBF5FF);
+  static const _blueTintBorder = Color(0xFFDBEAFE);
 
-  String _formatPrice(int price) {
-    return 'TSh ${price.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}';
+  String _fmt(int v) {
+    return 'TSh ${v.toString().replaceAllMapped(
+          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+          (Match m) => '${m[1]},',
+        )}';
   }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        ConfettiOverlay.show(context);
+      if (!mounted) return;
+      ConfettiOverlay.show(context);
 
-        final email = UserSession.userEmail ?? 'guest@fastnet.com';
-        final roomTotal = widget.destination.price * widget.numNights;
-        final vatTotal = (roomTotal * 0.125).round();
-        final grandTotal = roomTotal + vatTotal;
+      final email = widget.guestEmail?.trim().isNotEmpty == true
+          ? widget.guestEmail!.trim()
+          : (UserSession.userEmail ?? 'guest@fastnet.com');
+      final grandTotal = (widget.total ??
+              (widget.destination.price * widget.numNights))
+          .toInt();
 
-        // Generate the exact same e-receipt PDF the user sees on screen,
-        // upload it to Supabase Storage, then email it via the edge function.
-        _dispatchConfirmationEmail(
-          email: email,
-          grandTotal: grandTotal,
-        );
+      _dispatchConfirmationEmail(
+        email: email,
+        grandTotal: grandTotal,
+      );
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.mark_email_read_rounded, color: Colors.white, size: 20),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Confirmation email & e-receipt PDF sent to $email',
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                  ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.mark_email_read_rounded,
+                  color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Confirmation email & e-receipt PDF sent to $email',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 13),
                 ),
-              ],
-            ),
-            backgroundColor: const Color(0xFF008009),
-            duration: const Duration(seconds: 4),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ],
           ),
-        );
-      }
+          backgroundColor: const Color(0xFF008009),
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10)),
+        ),
+      );
     });
   }
 
@@ -2233,11 +1946,12 @@ class _BookingSuccessScreenState extends State<BookingSuccessScreen> {
     required int grandTotal,
   }) async {
     try {
-      final pdfBytes = await ReceiptPdfService.generate(
+      final receiptBytes = await ReceiptPdfService.generate(
         bookingCode: widget.bookingCode,
         lodgeName: widget.destination.name,
         roomNumber: widget.selectedRoomNumber,
-        location: '${widget.destination.area}, ${widget.destination.city}',
+        location:
+            '${widget.destination.area}, ${widget.destination.city}',
         dates: widget.selectedDatesText,
         guestName: widget.guestName,
         guestPhone: widget.guestPhone,
@@ -2246,374 +1960,261 @@ class _BookingSuccessScreenState extends State<BookingSuccessScreen> {
         paymentTime: widget.paymentTime,
       );
 
-      // Upload the phone-generated receipt so the edge function attaches the
-      // exact same PDF the guest sees on screen.
-      final receiptUrl = await SupabaseService.uploadReceiptPdf(widget.bookingCode, pdfBytes);
+      String? pdfBase64;
+      try {
+        pdfBase64 = base64Encode(receiptBytes);
+      } catch (_) {}
 
-      await SupabaseService.triggerConfirmationEmail(
-        userEmail: email,
-        guestName: widget.guestName,
-        guestPhone: widget.guestPhone,
+      await ApiService.generateReceipt(
         bookingCode: widget.bookingCode,
-        lodgeName: widget.destination.name,
-        roomNumber: widget.selectedRoomNumber,
-        location: '${widget.destination.area}, ${widget.destination.city}',
-        dates: widget.selectedDatesText,
-        numNights: widget.numNights,
-        pricePerNight: widget.destination.price,
-        paymentMethod: widget.paymentMethod,
-        paymentTime: widget.paymentTime,
-        amount: grandTotal,
-        receiptUrl: receiptUrl,
+        guestName: widget.guestName,
+        propertyName: widget.destination.name,
+        propertyAddress:
+            '${widget.destination.area}, ${widget.destination.city}',
+        totalPrice: grandTotal,
+        pdfBase64: pdfBase64,
       );
     } catch (e) {
-      debugPrint('Dispatch confirmation email error: $e');
+      debugPrint('Dispatch receipt error: $e');
     }
+  }
+
+  String _todayLabel() {
+    final now = DateTime.now();
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${now.day.toString().padLeft(2, '0')} ${months[now.month - 1]} ${now.year}';
   }
 
   @override
   Widget build(BuildContext context) {
-    final roomTotal = widget.destination.price * widget.numNights;
-    final vatTotal = (roomTotal * 0.125).round();
-    final grandTotal = roomTotal + vatTotal;
-
+    final paid = widget.paid;
+    final total =
+        (widget.total ?? (widget.destination.price * widget.numNights))
+            .toInt();
     return Scaffold(
-      backgroundColor: _bgGrey,
+      backgroundColor: _pageBg,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
-        centerTitle: true,
         leading: IconButton(
-          icon: const Icon(Icons.close_rounded, color: Colors.black87),
-          onPressed: () => Navigator.popUntil(context, (route) => route.isFirst),
-        ),
-        title: const Text(
-          'Booking Confirmed',
-          style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 18),
+          icon: const Icon(Icons.close_rounded, color: _ink),
+          onPressed: () =>
+              Navigator.popUntil(context, (route) => route.isFirst),
         ),
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: _border),
+            boxShadow: const [
+              BoxShadow(
+                  color: Color(0x0D000000),
+                  blurRadius: 16,
+                  offset: Offset(0, 6)),
+            ],
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── 2. "Congratulations! Your booking is now confirmed." Card ─
               Container(
-                width: double.infinity,
-                color: Colors.white,
-                padding: const EdgeInsets.fromLTRB(16, 18, 16, 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: paid ? _blueTint : _amberBg,
+                  border: Border.all(
+                      color:
+                          paid ? _blueTintBorder : _amberBorder),
+                ),
+                child: Icon(
+                  paid
+                      ? Icons.check_rounded
+                      : Icons.hourglass_bottom_rounded,
+                  size: 32,
+                  color: paid ? _blue : _amberFg,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                paid
+                    ? 'Your Booking Was Confirmed Successfully!'
+                    : 'Booking Details',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: _ink,
+                    height: 1.25),
+              ),
+              const SizedBox(height: 6),
+              RichText(
+                text: TextSpan(
+                  style:
+                      const TextStyle(fontSize: 14, color: _muted),
                   children: [
-                    BookingSuccessPulse(
-                      child: Text(
-                        'Congratulations ${widget.guestName.trim().isNotEmpty ? widget.guestName.trim() : ''}! Your booking is now confirmed.',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: _bookingNavy,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    _bookingCheckRow('We\'ve sent the confirmation SMS/email to ', widget.guestPhone),
-                    const SizedBox(height: 8),
-                    _bookingCheckRow('Your booking at ', widget.destination.name, isBoldEnd: true, postText: ' is already confirmed'),
-                    const SizedBox(height: 8),
-                    _bookingCheckRow('You can ', 'make changes or cancel your booking', isLink: true, postText: ' at any time'),
-                    const SizedBox(height: 8),
-                    _bookingCheckRow(
-                      'Get paperless confirmation when you ',
-                      'download the e-receipt',
-                      isLink: true,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ReceiptScreen(
-                              bookingCode: widget.bookingCode,
-                              lodgeName: widget.destination.name,
-                              roomNumber: widget.selectedRoomNumber,
-                              location: '${widget.destination.area}, ${widget.destination.city}',
-                              dates: widget.selectedDatesText,
-                              guestName: widget.guestName,
-                              guestPhone: widget.guestPhone,
-                              paymentMethod: widget.paymentMethod,
-                              numNights: widget.numNights,
-                              pricePerNight: widget.destination.price,
-                              paymentTime: widget.paymentTime,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 14),
-
-                    // ── Real-Time E-Receipt & Confirmation Email Notice Card ──
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF0FDF4),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFBBF7D0)),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.picture_as_pdf_rounded, color: Color(0xFF166534), size: 24),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'E-Receipt PDF Dispatched in Real-Time',
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF166534)),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  'Sent to ${UserSession.userEmail ?? "your email address"}',
-                                  style: TextStyle(fontSize: 12, color: Colors.green.shade800),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Action Buttons (Save confirmation & Print)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 44,
-                            child: ElevatedButton.icon(
-                              onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => ReceiptScreen(
-                                    bookingCode: widget.bookingCode,
-                                    lodgeName: widget.destination.name,
-                                    roomNumber: widget.selectedRoomNumber,
-                                    location: '${widget.destination.area}, ${widget.destination.city}',
-                                    dates: widget.selectedDatesText,
-                                    guestName: widget.guestName,
-                                    guestPhone: widget.guestPhone,
-                                    paymentMethod: widget.paymentMethod,
-                                    numNights: widget.numNights,
-                                    pricePerNight: widget.destination.price,
-                                    paymentTime: widget.paymentTime,
-                                  ),
-                                ),
-                              ),
-                              icon: const Icon(Icons.phone_android_rounded, size: 16, color: Colors.white),
-                              label: const Text('Save confirmation', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: _bookingBlue,
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        SizedBox(
-                          height: 44,
-                          child: OutlinedButton.icon(
-                            onPressed: () => Navigator.popUntil(context, (route) => route.isFirst),
-                            icon: const Icon(Icons.home_outlined, size: 16, color: _bookingBlue),
-                            label: const Text('Home', style: TextStyle(color: _bookingBlue, fontSize: 13, fontWeight: FontWeight.bold)),
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: _bookingBlue),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                            ),
-                          ),
-                        ),
-                      ],
+                    const TextSpan(text: 'Booking Reference: '),
+                    TextSpan(
+                      text: widget.bookingCode,
+                      style: const TextStyle(
+                          color: _burnt,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 18),
                     ),
                   ],
                 ),
               ),
-
-              const SizedBox(height: 12),
-
-              // ── 3. "Check your details" Card ──────────────────────────────
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border.all(color: Colors.grey.shade300),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Check your details',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _bookingNavy),
-                      ),
+              const SizedBox(height: 4),
+              Text(
+                paid
+                    ? 'A confirmation receipt has been generated for your stay.'
+                    : 'Payment ${widget.paymentStatus} — this stay is not confirmed yet.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12,
+                    color: paid ? _faintColor() : _amberFg,
+                    fontWeight:
+                        paid ? FontWeight.w400 : FontWeight.w600),
+              ),
+              if (!paid) ...[
+                const SizedBox(height: 2),
+                const Text(
+                  'Complete the payment from My bookings to confirm it.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: _muted),
+                ),
+              ],
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: _border, style: BorderStyle.solid),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      crossAxisAlignment:
+                          CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                            child: _fact('Booking ID',
+                                '#${widget.bookingCode}')),
+                        Expanded(
+                            child: _fact(
+                                'Date Issued', _todayLabel())),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      crossAxisAlignment:
+                          CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                            child: _fact('Booking Status',
+                                paid ? 'Confirmed' : 'Pending',
+                                ok: paid)),
+                        Expanded(
+                            child: _fact('Total Amount',
+                                _fmt(total),
+                                highlight: true)),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    _fact('Property & Destination',
+                        '${widget.destination.name} (${widget.destination.city})'),
+                    const SizedBox(height: 14),
+                    _fact('Stay Dates', widget.selectedDatesText),
+                    if (widget.guestName.trim().isNotEmpty) ...[
                       const SizedBox(height: 14),
-                      Text(
-                        widget.destination.name,
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _bookingBlue),
-                      ),
-                      const SizedBox(height: 12),
-
-                      _detailRow('Booking number', widget.bookingCode),
-                      const SizedBox(height: 6),
-                      _detailRow('PIN code', '3947 🔒', isLock: true),
-                      const SizedBox(height: 6),
-                      _detailRow('Booking details', '${widget.numNights} night${widget.numNights > 1 ? 's' : ''}, Room ${widget.selectedRoomNumber}'),
-                      const SizedBox(height: 6),
-                      _detailRow('Check-in', widget.selectedDatesText.split(' - ').first + ' (14:00 - 20:30)'),
-                      const SizedBox(height: 6),
-                      _detailRow('Check-out', (widget.selectedDatesText.contains('-') ? widget.selectedDatesText.split('-').last.trim() : 'Next Day') + ' (08:00 - 11:00)'),
-
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 14),
-                        child: Divider(height: 1, color: Color(0xFFE0E0E0)),
-                      ),
-
-                      // Price breakdown
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('1 room x ${widget.numNights} night(s)', style: const TextStyle(fontSize: 13, color: Colors.black87)),
-                          Text(_formatPrice(roomTotal), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('VAT & Taxes', style: TextStyle(fontSize: 13, color: Colors.black87)),
-                          Text(_formatPrice(vatTotal), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Price:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
-                          Row(
-                            children: [
-                              Text(
-                                _formatPrice(grandTotal),
-                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _bookingNavy),
-                              ),
-                              const SizedBox(width: 8),
-                              const Row(
-                                children: [
-                                  Icon(Icons.check_circle_outline_rounded, color: _bookingGreen, size: 14),
-                                  SizedBox(width: 2),
-                                  Text(
-                                    'Best Price Guaranteed',
-                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _bookingGreen),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
+                      _fact('Guest Name', widget.guestName.trim()),
                     ],
-                  ),
+                    const SizedBox(height: 14),
+                    _fact('Payment Method (Local)',
+                        '${widget.paymentMethod} (${(widget.paymentPhone ?? widget.guestPhone).trim()})'),
+                    const SizedBox(height: 14),
+                    _fact(
+                        'Guest Contact',
+                        [
+                          (widget.paymentPhone ?? widget.guestPhone)
+                              .trim(),
+                          (widget.guestEmail ?? '').trim(),
+                        ]
+                            .where((s) => s.isNotEmpty)
+                            .join(' · ')),
+                  ],
                 ),
               ),
-
-              const SizedBox(height: 12),
-
-              // ── 4. "Is everything correct?" Action Box ───────────────────
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEEF5FF),
-                    border: Border.all(color: const Color(0xFFCBE0FF)),
-                    borderRadius: BorderRadius.circular(6),
+              const SizedBox(height: 20),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _actionBtn(
+                    label: 'Browse More Stays',
+                    bg: Colors.white,
+                    fg: _ink,
+                    border: _border,
+                    onTap: () => Navigator.popUntil(
+                        context, (route) => route.isFirst),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Is everything correct?',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: _bookingNavy),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'You can always view or change your booking online — no registration required.',
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                      ),
-                      const SizedBox(height: 12),
-                      _bookingLinkAction('💳 Edit payment details', () {}),
-                      const SizedBox(height: 8),
-                      _bookingLinkAction('📅 Change dates', () {}),
-                      const SizedBox(height: 8),
-                      _bookingLinkAction('👤 Edit guest details', () {}),
-                      const SizedBox(height: 8),
-                      _bookingLinkAction('💬 Contact the property', () {}),
-                      const SizedBox(height: 8),
-                      _bookingLinkAction('⭐ Leave a review', () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ReviewsScreen(lodgeName: widget.destination.name),
+                  _actionBtn(
+                    label: 'View My Bookings',
+                    bg: _blue,
+                    fg: Colors.white,
+                    border: _blue,
+                    onTap: () {
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const MainScreen(
+                                initialTab: 1)),
+                        (route) => route.isFirst,
+                      );
+                    },
+                  ),
+                  _actionBtn(
+                    label: 'View e-receipt',
+                    icon: Icons.receipt_outlined,
+                    bg: const Color(0xFFF8FAFC),
+                    fg: _blue,
+                    border: _border,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ReceiptScreen(
+                            bookingCode: widget.bookingCode,
+                            lodgeName: widget.destination.name,
+                            roomNumber:
+                                widget.selectedRoomNumber,
+                            location:
+                                '${widget.destination.area}, ${widget.destination.city}',
+                            dates: widget.selectedDatesText,
+                            guestName: widget.guestName,
+                            guestPhone: widget.guestPhone,
+                            paymentMethod:
+                                widget.paymentMethod,
+                            numNights: widget.numNights,
+                            pricePerNight:
+                                widget.destination.price,
+                            paymentTime: widget.paymentTime,
                           ),
-                        );
-                      }),
-                      const SizedBox(height: 8),
-                      _bookingLinkAction('❌ Cancel your booking', () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Free cancellation is active for this reservation.'),
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
-                      }, isDanger: true),
-                    ],
+                        ),
+                      );
+                    },
                   ),
-                ),
+                ],
               ),
-
-              const SizedBox(height: 12),
-
-              // ── 5. Property Details Card ─────────────────────────────────
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border.all(color: Colors.grey.shade300),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Property details',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: _bookingNavy),
-                      ),
-                      const SizedBox(height: 12),
-                      _detailRow('Address', '${widget.destination.area}, ${widget.destination.city}, Tanzania'),
-                      const SizedBox(height: 6),
-                      _detailRow('Phone', widget.guestPhone),
-                      const SizedBox(height: 6),
-                      _detailRow('Room Condition', widget.destination.condition),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 30),
             ],
           ),
         ),
@@ -2621,215 +2222,65 @@ class _BookingSuccessScreenState extends State<BookingSuccessScreen> {
     );
   }
 
-  Widget _bookingCheckRow(String text, String highlight, {bool isLink = false, bool isBoldEnd = false, String postText = '', VoidCallback? onTap}) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Icon(Icons.check, color: _bookingGreen, size: 16),
-        const SizedBox(width: 8),
-        Expanded(
-          child: GestureDetector(
-            onTap: onTap,
-            child: RichText(
-              text: TextSpan(
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade800, height: 1.3),
-                children: [
-                  TextSpan(text: text),
-                  TextSpan(
-                    text: highlight,
-                    style: TextStyle(
-                      fontWeight: (isLink || isBoldEnd) ? FontWeight.bold : FontWeight.w600,
-                      color: isLink ? _bookingBlue : Colors.black87,
-                      decoration: isLink ? TextDecoration.underline : TextDecoration.none,
-                    ),
-                  ),
-                  if (postText.isNotEmpty) TextSpan(text: postText),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  Color _faintColor() => const Color(0xFF9AA0A6);
 
-  Widget _detailRow(String label, String value, {bool isLock = false}) {
-    return Row(
+  Widget _fact(String label, String value,
+      {bool ok = false, bool highlight = false}) {
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          width: 120,
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
+        Text(label.toUpperCase(),
+            style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: _muted)),
+        const SizedBox(height: 2),
+        Text(value,
             style: TextStyle(
-              fontSize: 13,
-              color: isLock ? _bookingBlue : Colors.grey.shade800,
-              fontWeight: isLock ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ),
+                fontSize: 13.5,
+                fontWeight: FontWeight.w700,
+                color: highlight ? _burnt : (ok ? _greenOk() : _ink))),
       ],
     );
   }
 
-  Widget _bookingLinkAction(String title, VoidCallback onTap, {bool isDanger = false}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.bold,
-          color: isDanger ? Colors.red.shade700 : _bookingBlue,
-          decoration: TextDecoration.underline,
+  Color _greenOk() => const Color(0xFF15803D);
+
+  Widget _actionBtn({
+    required String label,
+    required Color bg,
+    required Color fg,
+    required Color border,
+    IconData? icon,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      borderRadius: BorderRadius.circular(30),
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: border),
         ),
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// _NextStepCard — staggered slide-up + fade-in action card
-// ─────────────────────────────────────────────────────────────────────────────
-class _NextStepCard extends StatefulWidget {
-  final int index;
-  final IconData icon;
-  final Color iconColor;
-  final Color iconBg;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  const _NextStepCard({
-    Key? key,
-    required this.index,
-    required this.icon,
-    required this.iconColor,
-    required this.iconBg,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  }) : super(key: key);
-
-  @override
-  State<_NextStepCard> createState() => _NextStepCardState();
-}
-
-class _NextStepCardState extends State<_NextStepCard>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _opacity;
-  late Animation<Offset> _slide;
-  bool _pressed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 420),
-    );
-
-    _opacity = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeOut),
-    );
-    _slide = Tween<Offset>(begin: const Offset(0, 0.25), end: Offset.zero).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic),
-    );
-
-    // Stagger based on index
-    Future.delayed(Duration(milliseconds: 120 + widget.index * 90), () {
-      if (mounted) _ctrl.forward();
-    });
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _opacity,
-      child: SlideTransition(
-        position: _slide,
-        child: GestureDetector(
-          onTapDown: (_) => setState(() => _pressed = true),
-          onTapUp: (_) {
-            setState(() => _pressed = false);
-            widget.onTap();
-          },
-          onTapCancel: () => setState(() => _pressed = false),
-          child: AnimatedScale(
-            scale: _pressed ? 0.97 : 1.0,
-            duration: const Duration(milliseconds: 100),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.grey.shade200),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.04),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  // Icon badge
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: widget.iconBg,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(widget.icon, color: widget.iconColor, size: 22),
-                  ),
-                  const SizedBox(width: 14),
-                  // Text
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.title,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          widget.subtitle,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade500,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Chevron
-                  Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400, size: 20),
-                ],
-              ),
-            ),
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 15, color: fg),
+              const SizedBox(width: 6),
+            ],
+            Text(label,
+                style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: fg)),
+          ],
         ),
       ),
     );

@@ -6,8 +6,17 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
+  /// Single backend source of truth — same URL the web app uses via
+  /// `BACKEND_API_URL` (see web/src/Service/FastnetApiClient.php,
+  /// web/config/app.php `backendApiUrl`).
+  ///
+  /// Resolution order:
+  ///   1. `--dart-define=BACKEND_API_URL=https://api.fastnetstays.com/api`
+  ///      (production + physical devices — REQUIRED, no default can reach
+  ///      your LAN from a phone).
+  ///   2. `--dart-define=IS_PRODUCTION=true` → production URL.
+  ///   3. Local dev: Android emulator → 10.0.2.2, iOS simulator/web → localhost.
   static String get baseUrl {
-    // Real working sync — unified with web/src/Service/FastnetApiClient.php env BACKEND_API_URL
     const String envUrl = String.fromEnvironment('BACKEND_API_URL', defaultValue: '');
     if (envUrl.isNotEmpty) return envUrl; // --dart-define=BACKEND_API_URL=https://api.fastnetstays.com/api
     const String productionUrl = 'https://api.fastnetstays.com/api';
@@ -20,6 +29,10 @@ class ApiService {
   }
 
   static String? _token;
+
+  /// Human-readable message from the last failed call (login/register/etc).
+  /// Screens can display this instead of a generic "try again".
+  static String? lastError;
 
   static Future<void> init() async {
     try {
@@ -58,11 +71,40 @@ class ApiService {
 
   static const Duration _timeout = Duration(seconds: 15);
 
+  /// Laravel paginators return `{data: [...], current_page, total}` while
+  /// some endpoints return a raw list. Unwrap both (+ `{items: [...]}`).
+  static List<dynamic> _unwrapList(dynamic decoded) {
+    if (decoded is List) return decoded;
+    if (decoded is Map<String, dynamic>) {
+      final data = decoded['data'];
+      if (data is List) return data;
+      final items = decoded['items'];
+      if (items is List) return items;
+    }
+    return [];
+  }
+
+  static String _errorMessage(int status, dynamic decoded, String fallback) {
+    try {
+      if (decoded is Map) {
+        final errors = decoded['errors'];
+        if (errors is Map && errors.isNotEmpty) {
+          final first = errors.values.first;
+          if (first is List && first.isNotEmpty) return first.first.toString();
+        }
+        final msg = decoded['message'];
+        if (msg is String && msg.isNotEmpty) return msg;
+      }
+    } catch (_) {}
+    return '$fallback (HTTP $status)';
+  }
+
   // ---------------------------------------------------------
   // AUTHENTICATION METHODS
   // ---------------------------------------------------------
 
   static Future<Map<String, dynamic>?> login(String email, String password) async {
+    lastError = null;
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/login'),
@@ -72,10 +114,12 @@ class ApiService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final token = data['access_token'];
-        await saveToken(token);
-        return data;
+        if (token is String) await saveToken(token);
+        return Map<String, dynamic>.from(data);
       }
+      lastError = _errorMessage(response.statusCode, jsonDecode(response.body), 'Invalid credentials');
     } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl. Is Laravel running? ($e)';
       debugPrint('API Login Error: $e');
     }
     return null;
@@ -88,6 +132,7 @@ class ApiService {
     required String phone,
     required String role,
   }) async {
+    lastError = null;
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/register'),
@@ -100,13 +145,15 @@ class ApiService {
           'role': role,
         }),
       ).timeout(_timeout);
-      if (response.statusCode == 201) {
+      if (response.statusCode == 201 || response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final token = data['access_token'];
-        await saveToken(token);
-        return data;
+        if (token is String) await saveToken(token);
+        return Map<String, dynamic>.from(data);
       }
+      lastError = _errorMessage(response.statusCode, jsonDecode(response.body), 'Registration failed');
     } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl. Is Laravel running? ($e)';
       debugPrint('API Register Error: $e');
     }
     return null;
@@ -133,18 +180,19 @@ class ApiService {
 
   static Future<List<dynamic>> fetchProperties({String? city, double? priceMax}) async {
     try {
-      String url = '$baseUrl/properties';
+      String url = '$baseUrl/properties?limit=50';
       List<String> queryParams = [];
-      if (city != null && city.isNotEmpty) queryParams.add('city=$city');
+      if (city != null && city.isNotEmpty) queryParams.add('city=${Uri.encodeComponent(city)}');
       if (priceMax != null) queryParams.add('price_max=$priceMax');
       if (queryParams.isNotEmpty) {
-        url += '?${queryParams.join('&')}';
+        url += '&${queryParams.join('&')}';
       }
 
       final response = await http.get(Uri.parse(url), headers: _headers).timeout(_timeout);
       if (response.statusCode == 200) {
-        return jsonDecode(response.body) as List<dynamic>;
+        return _unwrapList(jsonDecode(response.body));
       }
+      debugPrint('API Fetch Properties HTTP ${response.statusCode}: ${response.body}');
     } catch (e) {
       debugPrint('API Fetch Properties Error: $e');
     }
@@ -172,35 +220,62 @@ class ApiService {
   // ---------------------------------------------------------
 
   static Future<List<dynamic>> fetchBookings() async {
+    lastError = null;
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/bookings'),
+        Uri.parse('$baseUrl/bookings?per_page=50'),
         headers: _headers,
       ).timeout(_timeout);
       if (response.statusCode == 200) {
-        return jsonDecode(response.body) as List<dynamic>;
+        return _unwrapList(jsonDecode(response.body));
       }
+      lastError = _errorMessage(
+          response.statusCode, jsonDecode(response.body), 'Could not load bookings');
+      debugPrint('API Fetch Bookings HTTP ${response.statusCode}: ${response.body}');
     } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
       debugPrint('API Fetch Bookings Error: $e');
     }
     return [];
   }
 
-  static Future<Map<String, dynamic>?> createBooking(int roomId, String checkIn, String checkOut) async {
+  /// Backend `BookingController@store` requires room_id + dates and accepts
+  /// guest/payment extras (used for guest checkout + host notes). Returns the
+  /// full creation payload: `{booking, booking_code, total_price, ...}`.
+  static Future<Map<String, dynamic>?> createBooking(
+    int roomId,
+    String checkIn,
+    String checkOut, {
+    String? guestName,
+    String? guestEmail,
+    String? guestPhone,
+    String? paymentMethod,
+    String? paymentPhone,
+    String? specialRequests,
+  }) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/bookings'),
+        Uri.parse('$baseUrl/bookings/create'),
         headers: _headers,
         body: jsonEncode({
           'room_id': roomId,
           'check_in': checkIn,
           'check_out': checkOut,
+          if (guestName != null) 'guest_name': guestName,
+          if (guestEmail != null) 'guest_email': guestEmail,
+          if (guestPhone != null) 'guest_phone': guestPhone,
+          if (paymentMethod != null) 'payment_method': paymentMethod,
+          if (paymentPhone != null) 'payment_phone': paymentPhone,
+          if (specialRequests != null) 'special_requests': specialRequests,
         }),
       ).timeout(_timeout);
-      if (response.statusCode == 201) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
       }
+      lastError = _errorMessage(response.statusCode, jsonDecode(response.body), 'Booking failed');
+      debugPrint('API Create Booking HTTP ${response.statusCode}: ${response.body}');
     } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
       debugPrint('API Create Booking Error: $e');
     }
     return null;
@@ -247,21 +322,144 @@ class ApiService {
   // PAYMENT METHODS
   // ---------------------------------------------------------
 
-  static Future<Map<String, dynamic>?> checkoutPayment(int bookingId, String gateway) async {
+  /// Matches backend `PaymentController@checkout` (+ `web/PaymentService.php`):
+  /// booking_id or booking_code + provider + mobile-money number. Web rejects
+  /// card here — same rule.
+  static Future<Map<String, dynamic>?> checkoutPayment(
+    int bookingId,
+    String gateway, {
+    String? bookingCode,
+    String? phoneNumber,
+  }) async {
+    lastError = null;
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/payments/checkout'),
         headers: _headers,
         body: jsonEncode({
-          'booking_id': bookingId,
+          if (bookingId > 0) 'booking_id': bookingId,
+          if (bookingCode != null) 'booking_code': bookingCode,
           'gateway': gateway,
+          'payment_method': gateway,
+          if (phoneNumber != null) 'phone_number': phoneNumber,
         }),
       ).timeout(_timeout);
       if (response.statusCode == 200) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+      lastError = _errorMessage(response.statusCode, jsonDecode(response.body), 'Payment failed');
+    } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
+      debugPrint('API Checkout Payment Error: $e');
+    }
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> paymentStatus(String codeOrId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/payments/status/${Uri.encodeComponent(codeOrId)}'),
+        headers: _headers,
+      ).timeout(_timeout);
+      if (response.statusCode == 200) {
+        final d = jsonDecode(response.body);
+        if (d is Map<String, dynamic>) return d;
+        if (d is Map) return Map<String, dynamic>.from(d);
       }
     } catch (e) {
-      debugPrint('API Checkout Payment Error: $e');
+      debugPrint('API Payment Status Error: $e');
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------
+  // PROPERTY DETAIL / QUOTE (web parity: StaysDetailTrait + QuoteTrait)
+  // ---------------------------------------------------------
+
+  static Future<Map<String, dynamic>?> getProperty(int id, {Map<String, String>? context}) async {
+    try {
+      var url = '$baseUrl/properties/$id';
+      if (context != null && context.isNotEmpty) {
+        url += '?${context.entries.map((e) => '${e.key}=${Uri.encodeComponent(e.value)}').join('&')}';
+      }
+      final response = await http.get(Uri.parse(url), headers: _headers).timeout(_timeout);
+      if (response.statusCode == 200) {
+        final d = jsonDecode(response.body);
+        if (d is Map<String, dynamic>) return d['data'] is Map ? Map<String, dynamic>.from(d['data']) : d;
+        if (d is Map) return Map<String, dynamic>.from(d);
+      }
+    } catch (e) {
+      debugPrint('API Get Property Error: $e');
+    }
+    return null;
+  }
+
+  static Future<List<dynamic>> fetchRooms(int propertyId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/properties/$propertyId/rooms'),
+        headers: _headers,
+      ).timeout(_timeout);
+      if (response.statusCode == 200) return _unwrapList(jsonDecode(response.body));
+    } catch (e) {
+      debugPrint('API Fetch Rooms Error: $e');
+    }
+    return [];
+  }
+
+  static Future<Map<String, dynamic>?> calculateBooking({
+    required int propertyId,
+    int? roomId,
+    required String checkIn,
+    required String checkOut,
+    int guests = 2,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/bookings/calculate'),
+        headers: _headers,
+        body: jsonEncode({
+          'property_id': propertyId,
+          if (roomId != null) 'room_id': roomId,
+          'check_in': checkIn,
+          'check_out': checkOut,
+          'guests': guests,
+        }),
+      ).timeout(_timeout);
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+      lastError = _errorMessage(response.statusCode, jsonDecode(response.body), 'Price calculation failed');
+    } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
+      debugPrint('API Calculate Error: $e');
+    }
+    return null;
+  }
+
+  static Future<List<dynamic>> fetchReviews(int propertyId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/properties/$propertyId/reviews'),
+        headers: _headers,
+      ).timeout(_timeout);
+      if (response.statusCode == 200) return _unwrapList(jsonDecode(response.body));
+    } catch (e) {
+      debugPrint('API Fetch Reviews Error: $e');
+    }
+    return [];
+  }
+
+  static Future<Map<String, dynamic>?> me() async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/me'), headers: _headers).timeout(_timeout);
+      if (response.statusCode == 200) {
+        final d = jsonDecode(response.body);
+        if (d is Map<String, dynamic>) return d;
+        if (d is Map) return Map<String, dynamic>.from(d);
+      }
+    } catch (e) {
+      debugPrint('API Me Error: $e');
     }
     return null;
   }
@@ -277,7 +475,7 @@ class ApiService {
         headers: _headers,
       ).timeout(_timeout);
       if (response.statusCode == 200) {
-        return jsonDecode(response.body) as List<dynamic>;
+        return _unwrapList(jsonDecode(response.body));
       }
     } catch (e) {
       debugPrint('API Fetch Message Threads Error: $e');
@@ -292,7 +490,7 @@ class ApiService {
         headers: _headers,
       ).timeout(_timeout);
       if (response.statusCode == 200) {
-        return jsonDecode(response.body) as List<dynamic>;
+        return _unwrapList(jsonDecode(response.body));
       }
     } catch (e) {
       debugPrint('API Fetch Messages Error: $e');
@@ -354,7 +552,7 @@ class ApiService {
         headers: _headers,
       ).timeout(_timeout);
       if (response.statusCode == 200) {
-        return jsonDecode(response.body) as List<dynamic>;
+        return _unwrapList(jsonDecode(response.body));
       }
     } catch (e) {
       debugPrint('API Fetch Tickets Error: $e');
@@ -565,8 +763,112 @@ class ApiService {
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
+      lastError = _errorMessage(response.statusCode, jsonDecode(response.body), 'Password reset failed');
     } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
       debugPrint('API Reset Password Error: $e');
+    }
+    return null;
+  }
+
+  /// Web parity (`LoginOtpController`): verifies a password-reset code
+  /// (`POST /verify-otp {email, token}`) before allowing a new password.
+  static Future<Map<String, dynamic>?> verifyResetOtp(String email, String token) async {
+    lastError = null;
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/verify-otp'),
+        headers: _headers,
+        body: jsonEncode({'email': email, 'token': token}),
+      ).timeout(_timeout);
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      lastError = _errorMessage(response.statusCode, jsonDecode(response.body), 'Invalid verification code.');
+    } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
+      debugPrint('API Verify Reset OTP Error: $e');
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------
+  // PASSWORDLESS SIGN-IN (web parity: LoginOtpController)
+  // ---------------------------------------------------------
+
+  /// POST /login/otp/request {contact} — always 200 when the contact is
+  /// valid (never an existence oracle). Returns the decoded body.
+  static Future<Map<String, dynamic>?> requestLoginOtp(String contact) async {
+    lastError = null;
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/login/otp/request'),
+        headers: _headers,
+        body: jsonEncode({'contact': contact}),
+      ).timeout(_timeout);
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode == 200 && decoded is Map && decoded['success'] == true) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      lastError = _errorMessage(
+          response.statusCode,
+          decoded,
+          'We could not send a code. Please try again.');
+    } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
+      debugPrint('API Request Login OTP Error: $e');
+    }
+    return null;
+  }
+
+  /// POST /login/otp/resend — same work as request, honest button label.
+  static Future<Map<String, dynamic>?> resendLoginOtp(String contact) async {
+    lastError = null;
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/login/otp/resend'),
+        headers: _headers,
+        body: jsonEncode({'contact': contact}),
+      ).timeout(_timeout);
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode == 200 && decoded is Map && decoded['success'] == true) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      lastError = _errorMessage(
+          response.statusCode,
+          decoded,
+          'We could not send a code. Please try again.');
+    } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
+      debugPrint('API Resend Login OTP Error: $e');
+    }
+    return null;
+  }
+
+  /// POST /login/otp/verify {contact, code} — exchanges a correct code for
+  /// a real access token (mirrors `login()`: token is stored).
+  static Future<Map<String, dynamic>?> verifyLoginOtp(String contact, String code) async {
+    lastError = null;
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/login/otp/verify'),
+        headers: _headers,
+        body: jsonEncode({'contact': contact, 'code': code}),
+      ).timeout(_timeout);
+      final decoded = jsonDecode(response.body);
+      if (response.statusCode == 200 && decoded is Map && decoded['success'] == true) {
+        final data = Map<String, dynamic>.from(decoded);
+        final token = data['access_token'] ?? data['token'];
+        if (token is String) await saveToken(token);
+        return data;
+      }
+      lastError = _errorMessage(
+          response.statusCode,
+          decoded,
+          'That code is not correct. Please try again.');
+    } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
+      debugPrint('API Verify Login OTP Error: $e');
     }
     return null;
   }
@@ -602,12 +904,9 @@ class ApiService {
       final response = await http.get(
         Uri.parse('$baseUrl/lodge-requests'),
         headers: _headers,
-      );
+      ).timeout(_timeout);
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is List) {
-          return data.map((e) => Map<String, dynamic>.from(e)).toList();
-        }
+        return _unwrapList(jsonDecode(response.body)).map((e) => Map<String, dynamic>.from(e)).toList();
       }
     } catch (e) {
       debugPrint('API Fetch Lodge Requests Error: $e');
@@ -615,13 +914,14 @@ class ApiService {
     return [];
   }
 
+  /// Backend route is PATCH /lodge-requests/{id}/status (routes/api.php).
   static Future<bool> updateLodgeRequestStatus(int id, String status) async {
     try {
       final response = await http.patch(
-        Uri.parse('$baseUrl/lodge-requests/$id'),
+        Uri.parse('$baseUrl/lodge-requests/$id/status'),
         headers: _headers,
         body: jsonEncode({'status': status}),
-      );
+      ).timeout(_timeout);
       return response.statusCode == 200;
     } catch (e) {
       debugPrint('API Update Lodge Request Status Error: $e');
@@ -667,30 +967,57 @@ class ApiService {
     return false;
   }
 
-  /// Triggers real-time email dispatch with PDF receipt attachment to guest.
+  /// E-receipt via the real backend endpoint `POST /receipts/generate`
+  /// (BookingController@generateReceipt — shared with web `/booking-receipt`).
+  /// There is no `/bookings/{code}/send-confirmation-email` route.
+  static Future<Map<String, dynamic>?> generateReceipt({
+    required String bookingCode,
+    String? guestName,
+    String? propertyName,
+    String? propertyAddress,
+    String? checkIn,
+    String? checkOut,
+    dynamic totalPrice,
+    String? pdfBase64,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/receipts/generate'),
+        headers: _headers,
+        body: jsonEncode({
+          'booking_code': bookingCode,
+          if (guestName != null) 'guest_name': guestName,
+          if (propertyName != null) 'property_name': propertyName,
+          if (propertyAddress != null) 'property_address': propertyAddress,
+          if (checkIn != null) 'check_in': checkIn,
+          if (checkOut != null) 'check_out': checkOut,
+          if (totalPrice != null) 'total_price': totalPrice,
+          if (pdfBase64 != null) 'pdf_base64': pdfBase64,
+        }),
+      ).timeout(_timeout);
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+    } catch (e) {
+      debugPrint('API Generate Receipt Error: $e');
+    }
+    return null;
+  }
+
+  /// Kept for old call sites: now delegates to the real receipts endpoint.
   static Future<bool> sendConfirmationEmail({
     required String email,
     required String bookingCode,
     required String lodgeName,
     required int amount,
   }) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/bookings/$bookingCode/send-confirmation-email'),
-        headers: _headers,
-        body: jsonEncode({
-          'email': email,
-          'booking_code': bookingCode,
-          'lodge_name': lodgeName,
-          'amount': amount,
-          'attach_pdf': true,
-        }),
-      ).timeout(_timeout);
-      return response.statusCode == 200;
-    } catch (e) {
-      debugPrint('API Send Confirmation Email Error: $e');
-    }
-    return false;
+    final res = await generateReceipt(
+      bookingCode: bookingCode,
+      guestName: email,
+      propertyName: lodgeName,
+      totalPrice: amount,
+    );
+    return res != null;
   }
 
   /// Uploads a profile photo from the device and returns the remote URL.
@@ -713,19 +1040,41 @@ class ApiService {
     }
     return null;
   }
+  /// Backend returns `{status, notifications:[...], unread_count}`
+  /// (NotificationController) — not a raw list.
   static Future<List<dynamic>> fetchNotifications() async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/notifications'),
+        Uri.parse('$baseUrl/notifications?limit=30'),
         headers: _headers,
       ).timeout(_timeout);
       if (response.statusCode == 200) {
-        return jsonDecode(response.body) as List<dynamic>;
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic> && decoded['notifications'] is List) {
+          return decoded['notifications'] as List<dynamic>;
+        }
+        return _unwrapList(decoded);
       }
     } catch (e) {
       debugPrint('API Fetch Notifications Error: $e');
     }
     return [];
+  }
+
+  static Future<int> fetchUnreadCount() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/notifications/unread-count'),
+        headers: _headers,
+      ).timeout(_timeout);
+      if (response.statusCode == 200) {
+        final d = jsonDecode(response.body);
+        if (d is Map && d['unread_count'] is int) return d['unread_count'] as int;
+      }
+    } catch (e) {
+      debugPrint('API Unread Count Error: $e');
+    }
+    return 0;
   }
 
   static Future<bool> markNotificationAsRead(int id) async {
@@ -739,5 +1088,56 @@ class ApiService {
       debugPrint('API Mark Notification Read Error: $e');
     }
     return false;
+  }
+
+  // ---------------------------------------------------------
+  // WISHLIST (web parity: /my-wishlists + /wishlist-lists)
+  // ---------------------------------------------------------
+
+  static Future<List<dynamic>> fetchWishlist() async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/wishlist'), headers: _headers).timeout(_timeout);
+      if (response.statusCode == 200) return _unwrapList(jsonDecode(response.body));
+    } catch (e) {
+      debugPrint('API Fetch Wishlist Error: $e');
+    }
+    return [];
+  }
+
+  static Future<bool> addWishlist(int propertyId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/wishlist'),
+        headers: _headers,
+        body: jsonEncode({'property_id': propertyId}),
+      ).timeout(_timeout);
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      debugPrint('API Add Wishlist Error: $e');
+    }
+    return false;
+  }
+
+  static Future<bool> removeWishlist(int propertyId) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/wishlist/$propertyId'),
+        headers: _headers,
+      ).timeout(_timeout);
+      return response.statusCode == 200 || response.statusCode == 204;
+    } catch (e) {
+      debugPrint('API Remove Wishlist Error: $e');
+    }
+    return false;
+  }
+
+  static Future<List<dynamic>> fetchWishlistLists() async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/wishlist-lists'), headers: _headers).timeout(_timeout);
+      if (response.statusCode == 200) return _unwrapList(jsonDecode(response.body));
+    } catch (e) {
+      debugPrint('API Fetch Wishlist Lists Error: $e');
+    }
+    return [];
   }
 }

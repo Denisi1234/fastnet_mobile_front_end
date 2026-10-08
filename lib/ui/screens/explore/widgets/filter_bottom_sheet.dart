@@ -110,7 +110,7 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
                     TextButton(
                       onPressed: () {
                         setState(() {
-                          _priceRange = const RangeValues(0, 200000);
+                          _priceRange = const RangeValues(0, 500000);
                           _minRating = 0;
                           _freeCancellation = false;
                           _selectedAmenities.clear();
@@ -171,8 +171,8 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
                       ),
                       child: RangeSlider(
                         min: 0,
-                        max: 200000,
-                        divisions: 20,
+                        max: 500000,
+                        divisions: 50,
                         values: _priceRange,
                         onChanged: (range) => setState(() => _priceRange = range),
                       ),
@@ -374,7 +374,7 @@ class _FilterBottomSheetState extends State<FilterBottomSheet> {
       4, 8, 15, 30, 52, 78, 95, 115, 108, 90, 75, 58, 42, 32, 22, 15, 10, 6, 3, 1
     ];
     final double maxFreq = frequencies.reduce((a, b) => a > b ? a : b).toDouble();
-    final double step = 200000 / frequencies.length;
+    final double step = 500000 / frequencies.length;
 
     return Container(
       height: 50,

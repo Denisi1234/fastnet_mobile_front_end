@@ -11,6 +11,14 @@ class UserSessionProvider extends ChangeNotifier {
   String get userAvatar => UserSession.userAvatar;
   ImageProvider get profileImage => UserSession.getProfileImageProvider();
 
+  /// Web parity (`profile_sidebar.php` role gating).
+  String get userRole => UserSession.userRole;
+  bool get isOwnerOrAdmin =>
+      UserSession.userRole == 'owner' || UserSession.userRole == 'admin';
+  bool get isAdmin => UserSession.userRole == 'admin';
+  String? get avatarBg => UserSession.avatarBg;
+  String? get avatarFg => UserSession.avatarFg;
+
   void updateSession() {
     notifyListeners();
   }
