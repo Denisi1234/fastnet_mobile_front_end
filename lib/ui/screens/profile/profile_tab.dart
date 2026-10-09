@@ -5,7 +5,10 @@ import 'package:provider/provider.dart';
 import 'package:fastnet_mobile_front_end/providers/user_session_provider.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/login_signup_screen.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/auth/host_onboarding_screen.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/host/add_property.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/host/financial_reports.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/host/host_bookings.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/host/host_dashboard.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/host/manage_listings.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/notifications/notifications_screen.dart';
@@ -109,24 +112,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ),
     _ProfileMenuItem(
       id: 'host-dashboard',
-      icon: Icons.hotel_outlined,
+      icon: Icons.dashboard_outlined,
       label: 'Host Dashboard',
       page: HostDashboard.new,
       hostOnly: true,
     ),
     _ProfileMenuItem(
       id: 'host-listings',
-      icon: Icons.list_alt_rounded,
+      icon: Icons.hotel_outlined,
       label: 'My Properties',
       page: ManageListings.new,
       hostOnly: true,
     ),
     _ProfileMenuItem(
-      id: 'host-onboarding',
-      icon: Icons.add_home_outlined,
-      label: 'Onboard Lodge',
-      page: AddProperty.new,
+      id: 'host-bookings',
+      icon: Icons.event_available_outlined,
+      label: 'Host Bookings',
+      page: HostBookings.new,
       hostOnly: true,
+    ),
+    _ProfileMenuItem(
+      id: 'host-earnings',
+      icon: Icons.account_balance_wallet_outlined,
+      label: 'Financial Reports',
+      page: FinancialReports.new,
+      hostOnly: true,
+    ),
+    _ProfileMenuItem(
+      id: 'host-onboarding',
+      icon: Icons.add_business_outlined,
+      label: 'List Your Property',
+      page: HostOnboardingScreen.new,
     ),
     _ProfileMenuItem(
       id: 'help-center',

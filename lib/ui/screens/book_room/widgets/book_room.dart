@@ -353,12 +353,12 @@ class _BookRoomState extends State<BookRoom> {
     final d = widget.destination;
     final text = '''
 ${d.name}
-${d.rating > 0 ? '⭐ ${d.rating.toStringAsFixed(1)}${_reviewCount > 0 ? ' · $_reviewCount reviews' : ''}' : 'New property'}
-📍 ${d.area}, ${d.city}, Tanzania
-${d.price > 0 ? '💰 ${_formatPrice(d.price)} / night' : 'Price on request'}
+${d.rating > 0 ? '${d.rating.toStringAsFixed(1)}${_reviewCount > 0 ? ' · $_reviewCount reviews' : ''}' : 'New property'}
+${d.area}, ${d.city}, Tanzania
+${d.price > 0 ? '${_formatPrice(d.price)} / night' : 'Price on request'}
 
 Book this stay on FastNet:
-https://fastnet.app/lodges/${Uri.encodeComponent(d.name)}
+https://fastnetstays.com/hotel-detail?id=${d.id}
     '''
         .trim();
     Share.share(text, subject: 'Check out ${d.name} on FastNet');

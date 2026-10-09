@@ -385,9 +385,9 @@ class _GuestChatDetailScreenState extends State<GuestChatDetailScreen> {
   bool _isSafetyBannerDismissed = false;
 
   final List<Map<String, String>> _quickReplies = [
-    {'text': '📶 Wi-Fi Passcode', 'query': 'What is the Wi-Fi password?'},
-    {'text': '🔑 Early Check-in', 'query': 'Do you offer early check-in?'},
-    {'text': '🍳 Breakfast Options', 'query': 'Is breakfast included in the booking?'},
+    {'text': 'Wi-Fi Passcode', 'query': 'What is the Wi-Fi password?'},
+    {'text': 'Early Check-in', 'query': 'Do you offer early check-in?'},
+    {'text': 'Breakfast Options', 'query': 'Is breakfast included in the booking?'},
   ];
 
   @override
@@ -721,7 +721,7 @@ class _GuestChatDetailScreenState extends State<GuestChatDetailScreen> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '🗓️ $dates  •  🔑 Room $roomNum  •  $statusText',
+                      '$dates  •  Room $roomNum  •  $statusText',
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.bold,
@@ -894,7 +894,7 @@ class _GuestChatDetailScreenState extends State<GuestChatDetailScreen> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              '⚠️ Communicating or paying off-platform bypasses FASTNET safety shields. Never wire money directly.',
+              'Communicating or paying off-platform bypasses FASTNET safety shields. Never wire money directly.',
               style: TextStyle(
                 fontSize: 11,
                 color: Colors.amber.shade900,
