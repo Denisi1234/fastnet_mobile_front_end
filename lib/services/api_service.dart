@@ -239,6 +239,31 @@ class ApiService {
     return [];
   }
 
+  /// Single booking with relations (`room.property.host`, guest, payments).
+  /// Used to resolve the host contact for guest messaging. Returns null on
+  /// any failure; callers keep working with the cached list row instead.
+  static Future<Map<String, dynamic>?> fetchBookingDetail(int id) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/bookings/$id'),
+        headers: _headers,
+      ).timeout(_timeout);
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        final map = body is Map<String, dynamic>
+            ? body
+            : (body is Map ? Map<String, dynamic>.from(body) : null);
+        final data = map?['data'];
+        if (data is Map) return Map<String, dynamic>.from(data);
+        return map;
+      }
+      debugPrint('API Fetch Booking Detail HTTP ${response.statusCode}');
+    } catch (e) {
+      debugPrint('API Fetch Booking Detail Error: $e');
+    }
+    return null;
+  }
+
   /// Backend `BookingController@store` requires room_id + dates and accepts
   /// guest/payment extras (used for guest checkout + host notes). Returns the
   /// full creation payload: `{booking, booking_code, total_price, ...}`.
@@ -735,6 +760,65 @@ class ApiService {
       debugPrint('API Cancel Booking Error: $e');
     }
     return false;
+  }
+
+  /// Live reprice quote for moving a booking to new dates
+  /// (`POST /bookings/{id}/reschedule/quote`). Returns the quote map on
+  /// success (including `valid:false` + message when unavailable), or null
+  /// on transport failure with [lastError] set.
+  static Future<Map<String, dynamic>?> rescheduleQuote(
+      int id, String checkIn, String checkOut) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/bookings/$id/reschedule/quote'),
+        headers: _headers,
+        body: jsonEncode({'check_in': checkIn, 'check_out': checkOut}),
+      ).timeout(_timeout);
+      final body = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        lastError = null;
+        return body is Map<String, dynamic>
+            ? body
+            : Map<String, dynamic>.from(body as Map);
+      }
+      lastError = _errorMessage(
+          response.statusCode, body, 'Could not price the new dates.');
+      debugPrint(
+          'API Reschedule Quote HTTP ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
+      debugPrint('API Reschedule Quote Error: $e');
+    }
+    return null;
+  }
+
+  /// Applies a quoted date move (`POST /bookings/{id}/reschedule`).
+  /// Returns the result map (`booking`, `balance_due`, `message`) or null
+  /// on transport failure with [lastError] set.
+  static Future<Map<String, dynamic>?> rescheduleApply(
+      int id, String checkIn, String checkOut) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/bookings/$id/reschedule'),
+        headers: _headers,
+        body: jsonEncode({'check_in': checkIn, 'check_out': checkOut}),
+      ).timeout(_timeout);
+      final body = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        lastError = null;
+        return body is Map<String, dynamic>
+            ? body
+            : Map<String, dynamic>.from(body as Map);
+      }
+      lastError = _errorMessage(
+          response.statusCode, body, 'Could not move the booking.');
+      debugPrint(
+          'API Reschedule Apply HTTP ${response.statusCode}: ${response.body}');
+    } catch (e) {
+      lastError = 'Cannot reach backend at $baseUrl ($e)';
+      debugPrint('API Reschedule Apply Error: $e');
+    }
+    return null;
   }
 
   static Future<Map<String, dynamic>?> forgotPassword(String email) async {

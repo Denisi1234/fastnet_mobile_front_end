@@ -612,6 +612,8 @@ class _BookingCheckoutScreenState extends State<BookingCheckoutScreen> {
           : 'Pending',
       'payment_status': payStatus,
       'paymentTime': paymentTimeStr,
+      'check_in': _checkInIso(),
+      'check_out': _checkOutIso(),
       'verify_url': (serverVerifyUrl?.isNotEmpty ?? false)
           ? serverVerifyUrl
           : '',

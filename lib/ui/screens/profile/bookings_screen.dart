@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:fastnet_mobile_front_end/models/destination.dart';
 import 'package:fastnet_mobile_front_end/providers/bookings_provider.dart';
 import 'package:fastnet_mobile_front_end/providers/user_session_provider.dart';
+import 'package:fastnet_mobile_front_end/services/api_service.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/login_signup_screen.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/book_room.dart';
@@ -15,7 +16,7 @@ import 'package:fastnet_mobile_front_end/ui/widgets/fade_slide_page_route.dart';
 import 'package:fastnet_mobile_front_end/ui/widgets/property_image.dart';
 import 'package:fastnet_mobile_front_end/ui/widgets/shimmer_widget.dart';
 
-/// My bookings — Booking.com-grade trips screen in Material style.
+/// My bookings — Booking.com-grade trips screen in the Carbon system.
 ///
 /// Upcoming / Completed / Cancelled tabs over live backend rows, tonal
 /// status pills, per-status actions (real cancel, receipt, review,
@@ -31,13 +32,23 @@ class BookingsScreen extends StatefulWidget {
 }
 
 class _BookingsScreenState extends State<BookingsScreen> {
-  static const _ink = Color(0xFF1A1D25);
-  static const _muted = Color(0xFF5F6368);
-  static const _faint = Color(0xFF9AA0A6);
-  static const _border = Color(0xFFE8EAED);
-  static const _pageBg = Color(0xFFF8FAFC);
-  static const _blue = Color(0xFF1A73E8);
-  static const _blueTint = Color(0xFFE8F0FE);
+  // Carbon tokens (same system as the web: sharp corners, hairlines,
+  // flat fills — no rounded pastel Material styling on this flow).
+  static const _ink = Color(0xFF161616);
+  static const _muted = Color(0xFF525252);
+  static const _faint = Color(0xFF6F6F6F);
+  static const _border = Color(0xFFE0E0E0);
+  static const _pageBg = Color(0xFFF4F4F4);
+  static const _blue = Color(0xFF0F62FE);
+  static const _blueTint = Color(0xFFEDF5FF);
+  static const _greenBg = Color(0xFFDEFBE6);
+  static const _greenFg = Color(0xFF0E6027);
+  static const _redBg = Color(0xFFFDE7E9);
+  static const _redFg = Color(0xFFA2191F);
+  static const _amberBg = Color(0xFFFCF4D6);
+  static const _amberFg = Color(0xFF8E6A00);
+  static const _infoBg = Color(0xFFD0E2FF);
+  static const _infoFg = Color(0xFF0043CE);
 
   static const _tabs = ['upcoming', 'completed', 'cancelled'];
   static const _tabLabels = {
@@ -47,6 +58,15 @@ class _BookingsScreenState extends State<BookingsScreen> {
   };
 
   String _tab = 'upcoming';
+  String _query = '';
+  bool _soonestFirst = true;
+  final _searchCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -134,29 +154,80 @@ class _BookingsScreenState extends State<BookingsScreen> {
     );
   }
 
-  void _openReceipt(Map<String, dynamic> b) {
+  Future<void> _openReceipt(Map<String, dynamic> b) async {
     HapticFeedback.selectionClick();
+    final rawId = b['id'];
+    final id = rawId is int
+        ? rawId
+        : int.tryParse(rawId?.toString() ?? '');
+
+    Map<String, dynamic>? fresh;
+    if (id != null) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
+      );
+      fresh = await ApiService.fetchBookingDetail(id);
+      if (!mounted) return;
+      Navigator.pop(context);
+    }
+
+    final code = (b['code']?.toString().isNotEmpty ?? false)
+        ? b['code'].toString()
+        : 'Pending';
+    final name = (b['name'] ?? 'Lodge Stay').toString();
+    final area = (b['area'] ?? '').toString();
+    final city = (b['city'] ?? '').toString();
+    final price = (b['price'] is num)
+        ? (b['price'] as num).toInt()
+        : int.tryParse(b['price']?.toString() ?? '') ?? 0;
+
+    try {
+      await ApiService.generateReceipt(
+        bookingCode: code,
+        guestName: UserSession.userName,
+        propertyName: name,
+        propertyAddress: '$area, $city',
+        checkIn: fresh?['check_in']?.toString() ??
+            b['check_in']?.toString(),
+        checkOut: fresh?['check_out']?.toString() ??
+            b['check_out']?.toString(),
+        totalPrice: price,
+      );
+    } catch (_) {
+      // Local receipt below still renders from cached/server fields.
+    }
+    if (!mounted) return;
+
     final dest = _resolveDestination(b);
+    final nights =
+        (b['nights'] is num) ? (b['nights'] as num).toInt() : 1;
+    final total = (fresh?['total_price'] is num)
+        ? (fresh!['total_price'] as num).toInt()
+        : (int.tryParse(fresh?['total_price']?.toString() ?? '') ?? price);
+    final perNight = nights > 0 ? (total ~/ nights) : total;
+    final method = (fresh?['payment_method']?.toString().isNotEmpty ?? false)
+        ? fresh!['payment_method'].toString()
+        : (b['payment_method'] ?? 'Vodacom M-Pesa').toString();
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => ReceiptScreen(
-          bookingCode: (b['code']?.toString().isNotEmpty ?? false)
-              ? b['code']
-              : 'Pending',
-          lodgeName: (b['name'] ?? 'Lodge Stay').toString(),
+          bookingCode: code,
+          lodgeName: name,
           roomNumber: b['name'].toString().contains('Room')
               ? b['name'].toString().split('Room')[1].trim()
               : (b['roomNumber']?.toString() ?? '—'),
-          location: '${b['area'] ?? ''}, ${b['city'] ?? ''}',
+          location: '$area, $city',
           dates: (b['dates'] ?? '').toString(),
           guestName: UserSession.userName ?? 'Traveler',
           guestPhone: UserSession.userPhone ?? '',
-          paymentMethod:
-              (b['payment_method'] ?? 'Vodacom M-Pesa').toString(),
-          numNights:
-              (b['nights'] is num) ? (b['nights'] as num).toInt() : 1,
-          pricePerNight: dest.price,
+          paymentMethod: method,
+          numNights: nights,
+          pricePerNight: perNight > 0 ? perNight : dest.price,
           paymentTime: b['paymentTime'],
           verifyUrl: (b['verify_url']?.toString().isNotEmpty ?? false)
               ? b['verify_url'].toString()
@@ -221,7 +292,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
         title: const Text('Cancel this stay?',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
         content: Text(
@@ -237,11 +308,11 @@ class _BookingsScreenState extends State<BookingsScreen> {
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFB81922),
+              backgroundColor: _redFg,
               foregroundColor: Colors.white,
               elevation: 0,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
+                  borderRadius: BorderRadius.circular(0)),
             ),
             child: const Text('Cancel stay',
                 style: TextStyle(fontWeight: FontWeight.w700)),
@@ -256,16 +327,22 @@ class _BookingsScreenState extends State<BookingsScreen> {
           code: code,
         );
     if (!mounted) return;
+    if (ok) {
+      // Reload server truth: the cancelled row, released inventory and any
+      // refund/adjustment state now come from the backend, not local edits.
+      await context.read<BookingsProvider>().refresh();
+      if (!mounted) return;
+      setState(() => _tab = 'cancelled');
+    }
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
       ..showSnackBar(
         SnackBar(
           content: Text(ok
-              ? 'Stay cancelled.'
+              ? 'Stay cancelled. The property has been notified.'
               : 'Could not cancel. Please try again.'),
         ),
       );
-    if (ok) setState(() => _tab = 'cancelled');
   }
 
   @override
@@ -279,7 +356,26 @@ class _BookingsScreenState extends State<BookingsScreen> {
     final counts = {
       for (final t in _tabs) t: all.where((b) => _tabOf(b) == t).length,
     };
-    final list = all.where((b) => _tabOf(b) == _tab).toList();
+    final tabList = all.where((b) => _tabOf(b) == _tab).toList();
+    final q = _query.trim().toLowerCase();
+    final list = (q.isEmpty
+        ? tabList
+        : tabList.where((b) {
+            final hay =
+                '${b['code'] ?? ''} ${b['name'] ?? ''} ${b['city'] ?? ''} ${b['area'] ?? ''}'
+                    .toLowerCase();
+            return hay.contains(q);
+          }).toList())
+      ..sort((a, b) {
+        final da =
+            DateTime.tryParse((a['check_in'] ?? '').toString());
+        final db =
+            DateTime.tryParse((b['check_in'] ?? '').toString());
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return _soonestFirst ? da.compareTo(db) : db.compareTo(da);
+      });
     final loading =
         provider.status == BookingsSyncStatus.loading && all.isEmpty;
 
@@ -290,6 +386,10 @@ class _BookingsScreenState extends State<BookingsScreen> {
         elevation: 0,
         scrolledUnderElevation: 0,
         automaticallyImplyLeading: false,
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(1),
+          child: Divider(height: 1, thickness: 1, color: _border),
+        ),
         title: Row(
           children: [
             const Text('My bookings',
@@ -304,7 +404,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
                     horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: _blueTint,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(0),
                 ),
                 child: Text('${all.length}',
                     style: const TextStyle(
@@ -326,8 +426,59 @@ class _BookingsScreenState extends State<BookingsScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
           children: [
             _tabBar(counts),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(child: _searchField()),
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    setState(() => _soonestFirst = !_soonestFirst);
+                  },
+                  child: Tooltip(
+                    message: _soonestFirst
+                        ? 'Soonest first — tap for latest first'
+                        : 'Latest first — tap for soonest first',
+                    child: Container(
+                      height: 50,
+                      width: 50,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(0),
+        border: Border.all(color: const Color(0xFFE0E0E0)),
+                      ),
+                      child: Icon(
+                        _soonestFirst
+                            ? Icons.arrow_upward_rounded
+                            : Icons.arrow_downward_rounded,
+                        size: 20,
+                        color: _blue,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 6),
             _syncLine(provider),
+            if (all.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              const Row(
+                children: [
+                  SizedBox(width: 4),
+                  Icon(Icons.touch_app_rounded,
+                      size: 13, color: _faint),
+                  SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      'Tap a booking for full details, check-in & receipt',
+                      style: TextStyle(fontSize: 11.5, color: _faint),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 10),
             if (loading) ...[
               for (int i = 0; i < 3; i++) ...[
@@ -348,12 +499,48 @@ class _BookingsScreenState extends State<BookingsScreen> {
     );
   }
 
+  /// Booking-code / property / city search (OTA standard for long histories).
+  Widget _searchField() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(0),
+        border: Border.all(color: _border),
+      ),
+      child: TextField(
+        controller: _searchCtrl,
+        onChanged: (v) => setState(() => _query = v),
+        textInputAction: TextInputAction.search,
+        style: const TextStyle(fontSize: 14, color: _ink),
+        decoration: InputDecoration(
+          hintText: 'Search by code, lodge, or city',
+          hintStyle: const TextStyle(fontSize: 13.5, color: _faint),
+          prefixIcon: const Icon(Icons.search_rounded, size: 20, color: _muted),
+          suffixIcon: _query.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.clear_rounded,
+                      size: 18, color: _muted),
+                  onPressed: () {
+                    HapticFeedback.selectionClick();
+                    _searchCtrl.clear();
+                    setState(() => _query = '');
+                  },
+                ),
+          border: InputBorder.none,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 4, vertical: 13),
+        ),
+      ),
+    );
+  }
+
   Widget _tabBar(Map<String, int> counts) {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(0),
         border: Border.all(color: _border),
       ),
       child: Row(
@@ -366,13 +553,13 @@ class _BookingsScreenState extends State<BookingsScreen> {
                 HapticFeedback.selectionClick();
                 setState(() => _tab = t);
               },
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(0),
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
                   color: active ? _blue : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(0),
                 ),
                 child: Text(
                   '${_tabLabels[t]} (${counts[t] ?? 0})',
@@ -402,15 +589,15 @@ class _BookingsScreenState extends State<BookingsScreen> {
         padding: const EdgeInsets.symmetric(
             horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
-          color: const Color(0xFFFFFBEB),
-          borderRadius: BorderRadius.circular(10),
+          color: _amberBg,
+          borderRadius: BorderRadius.circular(0),
           border:
-              Border.all(color: const Color(0xFFFDE68A)),
+              Border.all(color: const Color(0xFFFDDC69)),
         ),
         child: Row(
           children: [
             const Icon(Icons.cloud_off_outlined,
-                size: 15, color: Color(0xFF92400E)),
+                size: 15, color: _amberFg),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -418,7 +605,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
                 style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF92400E)),
+                    color: _amberFg),
               ),
             ),
             GestureDetector(
@@ -452,6 +639,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
   }
 
   Widget _emptyState() {
+    final searching = _query.trim().isNotEmpty;
     final isCancelled = _tab == 'cancelled';
     return Container(
       margin: const EdgeInsets.only(top: 8),
@@ -459,7 +647,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
           const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(0),
         border: Border.all(color: _border),
       ),
       child: Column(
@@ -468,24 +656,28 @@ class _BookingsScreenState extends State<BookingsScreen> {
             width: 64,
             height: 64,
             decoration: const BoxDecoration(
-              color: Color(0xFFF1F5F9),
+              color: Color(0xFFE8E8E8),
               shape: BoxShape.circle,
             ),
             child: Icon(
-              isCancelled
-                  ? Icons.cancel_outlined
-                  : Icons.luggage_outlined,
+              searching
+                  ? Icons.search_off_rounded
+                  : (isCancelled
+                      ? Icons.cancel_outlined
+                      : Icons.luggage_outlined),
               size: 28,
               color: _faint,
             ),
           ),
           const SizedBox(height: 16),
           Text(
-            _tab == 'upcoming'
-                ? 'No upcoming stays'
-                : _tab == 'completed'
-                    ? 'No completed stays yet'
-                    : 'No cancelled stays',
+            searching
+                ? 'No matches for "${_query.trim()}"'
+                : _tab == 'upcoming'
+                    ? 'No upcoming stays'
+                    : _tab == 'completed'
+                        ? 'No completed stays yet'
+                        : 'No cancelled stays',
             style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
@@ -493,11 +685,13 @@ class _BookingsScreenState extends State<BookingsScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            _tab == 'upcoming'
-                ? 'Your confirmed reservations will appear here.'
-                : _tab == 'completed'
-                    ? 'Finished stays will appear here.'
-                    : 'Cancelled reservations will appear here.',
+            searching
+                ? 'Try a booking code, lodge name, or city.'
+                : _tab == 'upcoming'
+                    ? 'Your confirmed reservations will appear here.'
+                    : _tab == 'completed'
+                        ? 'Finished stays will appear here.'
+                        : 'Cancelled reservations will appear here.',
             textAlign: TextAlign.center,
             style: const TextStyle(
                 fontSize: 13, color: _muted, height: 1.4),
@@ -515,6 +709,10 @@ class _BookingsScreenState extends State<BookingsScreen> {
         elevation: 0,
         scrolledUnderElevation: 0,
         automaticallyImplyLeading: false,
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(1),
+          child: Divider(height: 1, thickness: 1, color: _border),
+        ),
         title: const Text('My bookings',
             style: TextStyle(
                 color: _ink,
@@ -574,7 +772,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
                     foregroundColor: Colors.white,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(0)),
                   ),
                   child: const Text('Log In / Register',
                       style: TextStyle(
@@ -594,22 +792,22 @@ class _BookingsScreenState extends State<BookingsScreen> {
   ({Color bg, Color fg}) _statusColors(String status) {
     switch (status.toLowerCase().trim()) {
       case 'confirmed':
-        return (bg: const Color(0xFFE6F4EA), fg: const Color(0xFF137333));
+        return (bg: _greenBg, fg: _greenFg);
       case 'pending':
-        return (bg: const Color(0xFFFEF3C7), fg: const Color(0xFF92400E));
+        return (bg: _amberBg, fg: _amberFg);
       case 'cancelled':
       case 'canceled':
-        return (bg: const Color(0xFFFDECEA), fg: const Color(0xFFB81922));
+        return (bg: _redBg, fg: _redFg);
       case 'checked in':
       case 'checked_in':
-        return (bg: _blueTint, fg: const Color(0xFF1967D2));
+        return (bg: _infoBg, fg: _infoFg);
       case 'completed':
         return (
-          bg: const Color(0xFFF1F5F9),
-          fg: const Color(0xFF475569)
+          bg: const Color(0xFFE8E8E8),
+          fg: const Color(0xFF525252)
         );
       default:
-        return (bg: const Color(0xFFE6F4EA), fg: const Color(0xFF137333));
+        return (bg: _greenBg, fg: _greenFg);
     }
   }
 
@@ -621,28 +819,25 @@ class _BookingsScreenState extends State<BookingsScreen> {
     final dates = (b['dates'] ?? '').toString();
     return InkWell(
       onTap: () => _openDetails(b),
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(0),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(0),
           border: Border.all(color: _border),
-          boxShadow: const [
-            BoxShadow(
-                color: Color(0x0D000000),
-                blurRadius: 12,
-                offset: Offset(0, 4)),
-          ],
+          boxShadow: null,
         ),
-        child: Column(
-          children: [
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(0),
+          child: Column(
+            children: [
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 ClipRRect(
                   borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(16),
-                    bottomLeft: Radius.circular(16),
+                    topLeft: Radius.circular(0),
+                    bottomLeft: Radius.circular(0),
                   ),
                   child: SizedBox(
                     width: 118,
@@ -672,7 +867,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
                               decoration: BoxDecoration(
                                 color: colors.bg,
                                 borderRadius:
-                                    BorderRadius.circular(8),
+                                    BorderRadius.circular(0),
                               ),
                               child: Text(
                                 status.toUpperCase(),
@@ -694,15 +889,26 @@ class _BookingsScreenState extends State<BookingsScreen> {
                           ],
                         ),
                         const SizedBox(height: 6),
-                        Text(
-                          (b['name'] ?? 'Lodge Stay').toString(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 15.5,
-                              fontWeight: FontWeight.w800,
-                              color: _ink,
-                              height: 1.25),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                (b['name'] ?? 'Lodge Stay').toString(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontSize: 15.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: _ink,
+                                    height: 1.25),
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            const Icon(
+                                Icons.chevron_right_rounded,
+                                size: 20,
+                                color: _faint),
+                          ],
                         ),
                         const SizedBox(height: 2),
                         Text(
@@ -760,8 +966,37 @@ class _BookingsScreenState extends State<BookingsScreen> {
               ),
               child: _cardActions(b),
             ),
+            GestureDetector(
+              onTap: () => _openDetails(b),
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 10),
+                decoration: const BoxDecoration(
+                  color: _blueTint,
+                  border: Border(
+                      top: BorderSide(color: _border)),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'View stay details',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: _blue),
+                    ),
+                    SizedBox(width: 4),
+                    Icon(Icons.arrow_forward_rounded,
+                        size: 16, color: _blue),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -776,25 +1011,25 @@ class _BookingsScreenState extends State<BookingsScreen> {
       IconData? icon,
     }) {
       final fg = danger
-          ? const Color(0xFFB81922)
+          ? _redFg
           : (primary ? Colors.white : _ink);
       return Expanded(
         child: SizedBox(
-          height: 44,
+          height: 48,
           child: InkWell(
             onTap: () {
               HapticFeedback.selectionClick();
               onTap();
             },
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(0),
             child: Container(
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: primary ? _blue : Colors.white,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(0),
                 border: Border.all(
                     color: danger
-                        ? const Color(0xFFFECACA)
+                        ? const Color(0xFFF4C7C7)
                         : (primary ? _blue : _border)),
               ),
               child: Row(
@@ -884,15 +1119,15 @@ class _SkeletonCard extends StatelessWidget {
       height: 172,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE8EAED)),
+        borderRadius: BorderRadius.circular(0),
+        border: Border.all(color: const Color(0xFFE0E0E0)),
       ),
       child: const Row(
         children: [
           Padding(
             padding: EdgeInsets.all(10),
             child: ShimmerWidget(
-                width: 100, height: double.infinity, borderRadius: 12),
+                width: 100, height: double.infinity, borderRadius: 0),
           ),
           Expanded(
             child: Padding(
@@ -906,17 +1141,17 @@ class _SkeletonCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       ShimmerWidget(
-                          width: 90, height: 14, borderRadius: 4),
+                          width: 90, height: 14, borderRadius: 0),
                       SizedBox(height: 8),
                       ShimmerWidget(
-                          width: 150, height: 17, borderRadius: 4),
+                          width: 150, height: 17, borderRadius: 0),
                       SizedBox(height: 8),
                       ShimmerWidget(
-                          width: 120, height: 12, borderRadius: 4),
+                          width: 120, height: 12, borderRadius: 0),
                     ],
                   ),
                   ShimmerWidget(
-                      width: 80, height: 15, borderRadius: 4),
+                      width: 80, height: 15, borderRadius: 0),
                 ],
               ),
             ),

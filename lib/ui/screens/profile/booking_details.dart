@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import 'package:fastnet_mobile_front_end/config/constants.dart';
 import 'package:fastnet_mobile_front_end/models/destination.dart';
+import 'package:fastnet_mobile_front_end/services/api_service.dart';
+import 'package:fastnet_mobile_front_end/ui/screens/profile/guest_messages.dart';
 import 'package:fastnet_mobile_front_end/providers/bookings_provider.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/auth/user_session.dart';
 import 'package:fastnet_mobile_front_end/ui/screens/book_room/widgets/book_room.dart';
@@ -23,13 +27,23 @@ class BookingDetailsScreen extends StatelessWidget {
 
   const BookingDetailsScreen({super.key, required this.booking});
 
-  static const _ink = Color(0xFF1A1D25);
-  static const _muted = Color(0xFF5F6368);
-  static const _faint = Color(0xFF9AA0A6);
-  static const _border = Color(0xFFE8EAED);
-  static const _pageBg = Color(0xFFF8FAFC);
-  static const _blue = Color(0xFF1A73E8);
-  static const _blueTint = Color(0xFFE8F0FE);
+  // Carbon tokens (same system as the web: sharp corners, hairlines,
+  // flat fills — matches the bookings list screen).
+  static const _ink = Color(0xFF161616);
+  static const _muted = Color(0xFF525252);
+  static const _faint = Color(0xFF6F6F6F);
+  static const _border = Color(0xFFE0E0E0);
+  static const _pageBg = Color(0xFFF4F4F4);
+  static const _blue = Color(0xFF0F62FE);
+  static const _blueTint = Color(0xFFEDF5FF);
+  static const _greenBg = Color(0xFFDEFBE6);
+  static const _greenFg = Color(0xFF0E6027);
+  static const _redBg = Color(0xFFFDE7E9);
+  static const _redFg = Color(0xFFA2191F);
+  static const _amberBg = Color(0xFFFCF4D6);
+  static const _amberFg = Color(0xFF8E6A00);
+  static const _infoBg = Color(0xFFD0E2FF);
+  static const _infoFg = Color(0xFF0043CE);
 
   String _formatPrice(dynamic price) {
     final v = price is num
@@ -41,19 +55,22 @@ class BookingDetailsScreen extends StatelessWidget {
   ({Color bg, Color fg}) _statusColors(String status) {
     switch (status.toLowerCase().trim()) {
       case 'confirmed':
-        return (bg: const Color(0xFFE6F4EA), fg: const Color(0xFF137333));
+        return (bg: _greenBg, fg: _greenFg);
       case 'pending':
-        return (bg: const Color(0xFFFEF3C7), fg: const Color(0xFF92400E));
+        return (bg: _amberBg, fg: _amberFg);
       case 'cancelled':
       case 'canceled':
-        return (bg: const Color(0xFFFDECEA), fg: const Color(0xFFB81922));
+        return (bg: _redBg, fg: _redFg);
       case 'checked in':
       case 'checked_in':
-        return (bg: _blueTint, fg: const Color(0xFF1967D2));
+        return (bg: _infoBg, fg: _infoFg);
       case 'completed':
-        return (bg: const Color(0xFFF1F5F9), fg: const Color(0xFF475569));
+        return (
+          bg: const Color(0xFFE8E8E8),
+          fg: const Color(0xFF525252)
+        );
       default:
-        return (bg: const Color(0xFFE6F4EA), fg: const Color(0xFF137333));
+        return (bg: _greenBg, fg: _greenFg);
     }
   }
 
@@ -94,30 +111,77 @@ class BookingDetailsScreen extends StatelessWidget {
     );
   }
 
-  void _openReceipt(BuildContext context, Map<String, dynamic> b) {
+  /// Receipt from server truth: refreshes the booking, registers the
+  /// authoritative server receipt record, then renders. Falls back to the
+  /// cached row when offline so the receipt still opens.
+  Future<void> _openReceipt(
+      BuildContext context, Map<String, dynamic> b) async {
     HapticFeedback.selectionClick();
-    final dest = _resolveDestination(b);
-    final nights = (b['nights'] is num) ? (b['nights'] as num).toInt() : 1;
-    final total = (b['price'] is num)
+    final rawId = b['id'];
+    final id = rawId is int
+        ? rawId
+        : int.tryParse(rawId?.toString() ?? '');
+
+    Map<String, dynamic>? fresh;
+    if (id != null) {
+      _showWorking(context);
+      fresh = await ApiService.fetchBookingDetail(id);
+      if (!context.mounted) return;
+      Navigator.pop(context);
+    }
+
+    final code = (b['code']?.toString().isNotEmpty ?? false)
+        ? b['code'].toString()
+        : 'Pending';
+    final name = (b['name'] ?? 'Lodge Stay').toString();
+    final area = (b['area'] ?? '').toString();
+    final city = (b['city'] ?? '').toString();
+    final price = (b['price'] is num)
         ? (b['price'] as num).toInt()
         : int.tryParse(b['price']?.toString() ?? '') ?? 0;
+
+    // Server-side receipt record (same file per code — safe to refresh).
+    try {
+      await ApiService.generateReceipt(
+        bookingCode: code,
+        guestName: UserSession.userName,
+        propertyName: name,
+        propertyAddress: '$area, $city',
+        checkIn: fresh?['check_in']?.toString() ??
+            b['check_in']?.toString(),
+        checkOut: fresh?['check_out']?.toString() ??
+            b['check_out']?.toString(),
+        totalPrice: price,
+      );
+    } catch (_) {
+      // Local receipt below still renders from cached/server fields.
+    }
+    if (!context.mounted) return;
+
+    final dest = _resolveDestination(b);
+    final nights =
+        (b['nights'] is num) ? (b['nights'] as num).toInt() : 1;
+    final total = (fresh?['total_price'] is num)
+        ? (fresh!['total_price'] as num).toInt()
+        : (int.tryParse(fresh?['total_price']?.toString() ?? '') ?? price);
     final perNight = nights > 0 ? (total ~/ nights) : total;
+    final method = (fresh?['payment_method']?.toString().isNotEmpty ?? false)
+        ? fresh!['payment_method'].toString()
+        : (b['payment_method'] ?? 'Vodacom M-Pesa').toString();
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => ReceiptScreen(
-          bookingCode: (b['code']?.toString().isNotEmpty ?? false)
-              ? b['code'].toString()
-              : 'Pending',
-          lodgeName: (b['name'] ?? 'Lodge Stay').toString(),
+          bookingCode: code,
+          lodgeName: name,
           roomNumber: b['name'].toString().contains('Room')
               ? b['name'].toString().split('Room')[1].trim()
               : (b['roomNumber']?.toString() ?? '—'),
-          location: '${b['area'] ?? ''}, ${b['city'] ?? ''}',
+          location: '$area, $city',
           dates: (b['dates'] ?? '').toString(),
           guestName: UserSession.userName ?? 'Traveler',
           guestPhone: UserSession.userPhone ?? '',
-          paymentMethod: (b['payment_method'] ?? 'Vodacom M-Pesa').toString(),
+          paymentMethod: method,
           numNights: nights,
           pricePerNight: perNight > 0 ? perNight : dest.price,
           paymentTime: b['paymentTime']?.toString(),
@@ -176,6 +240,366 @@ class BookingDetailsScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _openSupport(BuildContext context) async {
+    final uri = Uri.parse(AppConstants.supportUrl);
+    bool opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      opened = false;
+    }
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Could not open support page. Please visit ${AppConstants.supportUrlDisplay}.')),
+      );
+    }
+  }
+
+  /// Host contact for guest messaging: one authenticated detail fetch,
+  /// resolved on demand so the cached list rows stay lean. Null when
+  /// unresolvable (offline, unlisted property) — callers degrade gracefully.
+  Future<({int hostId, String hostName, String lodge})?> _resolveHost(
+      Map<String, dynamic> b) async {
+    final lodge = (b['name'] ?? 'Lodge Stay').toString();
+    final rawId = b['id'];
+    final id = rawId is int
+        ? rawId
+        : int.tryParse(rawId?.toString() ?? '');
+    if (id == null) return null;
+    final detail = await ApiService.fetchBookingDetail(id);
+    if (detail == null) return null;
+    try {
+      final room = detail['room'] is Map
+          ? Map<String, dynamic>.from(detail['room'] as Map)
+          : null;
+      final property = room?['property'] is Map
+          ? Map<String, dynamic>.from(room!['property'] as Map)
+          : null;
+      final host = property?['host'] is Map
+          ? Map<String, dynamic>.from(property!['host'] as Map)
+          : null;
+      final rawHostId = host?['id'] ?? property?['host_id'];
+      final hostId = rawHostId is int
+          ? rawHostId
+          : int.tryParse(rawHostId?.toString() ?? '');
+      if (hostId == null) return null;
+      final hostName = (host?['name']?.toString().isNotEmpty ?? false)
+          ? (host!['name'] as String)
+          : 'Your host';
+      return (hostId: hostId, hostName: hostName, lodge: lodge);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _showWorking(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      ),
+    );
+  }
+
+  Future<void> _messageHost(
+      BuildContext context, Map<String, dynamic> b) async {
+    HapticFeedback.selectionClick();
+    _showWorking(context);
+    final host = await _resolveHost(b);
+    if (!context.mounted) return;
+    Navigator.pop(context);
+    if (host == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Could not reach the property right now. Try again or contact support.')),
+      );
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GuestChatDetailScreen(thread: {
+          'hostId': host.hostId,
+          'hostName': host.hostName,
+          'lodgeName': host.lodge,
+          'avatar': 'assets/images/man2.jpeg',
+          'isOnline': false,
+          'isReal': true,
+          'unread': false,
+          'lastMessage': '',
+          'time': '',
+        }),
+      ),
+    );
+  }
+
+  /// Guest arrival notice: check-in itself is confirmed by the host
+  /// (backend enforces host-only arrival), so this sends a real
+  /// "guest has arrived" message the host can act on.
+  Future<void> _arrivalNotice(
+      BuildContext context, Map<String, dynamic> b) async {
+    final code = (b['code']?.toString().isNotEmpty ?? false)
+        ? b['code'].toString()
+        : 'your booking';
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
+        title: const Text("You've arrived?",
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+        content: const Text(
+          'This lets the property know you are here so they can confirm your check-in.',
+          style: TextStyle(fontSize: 13.5, height: 1.45),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child:
+                const Text('Not yet', style: TextStyle(color: _muted)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _blue,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(0)),
+            ),
+            child: const Text('Notify host',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+    HapticFeedback.mediumImpact();
+    _showWorking(context);
+    final host = await _resolveHost(b);
+    if (!context.mounted) return;
+    Navigator.pop(context);
+    if (host == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Could not reach the property right now. Please try again.')),
+      );
+      return;
+    }
+    final guest = UserSession.userName ?? 'A guest';
+    final sent = await ApiService.sendMessage(
+      recipientId: host.hostId,
+      lodgeName: host.lodge,
+      text:
+          'Hello! $guest has arrived for booking $code. Please confirm check-in when ready.',
+    );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(sent != null
+              ? 'Host notified — they will confirm your check-in.'
+              : 'Could not reach the property. Please try again.'),
+        ),
+      );
+  }
+
+  /// Real date change (quote → confirm → apply): live availability and
+  /// reprice from the backend, applied server-side with host notification.
+  Future<void> _requestChange(
+      BuildContext context, Map<String, dynamic> b) async {
+    HapticFeedback.selectionClick();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 365)),
+      helpText: 'Choose new dates',
+    );
+    if (range == null || !context.mounted) return;
+
+    final rawId = b['id'];
+    final id = rawId is int
+        ? rawId
+        : int.tryParse(rawId?.toString() ?? '');
+    if (id == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Only confirmed server bookings can be moved. Pull to refresh and try again.')),
+      );
+      return;
+    }
+
+    _showWorking(context);
+    final quote = await ApiService.rescheduleQuote(
+        id, _isoDay(range.start), _isoDay(range.end));
+    if (!context.mounted) return;
+    Navigator.pop(context);
+
+    final valid = quote?['valid'] == true;
+    if (!valid) {
+      final msg = (quote?['message']?.toString().isNotEmpty ?? false)
+          ? quote!['message'].toString()
+          : (ApiService.lastError ??
+              'Those dates are unavailable for this room.');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
+      return;
+    }
+
+    final nights = (quote!['nights'] is num)
+        ? (quote['nights'] as num).toInt()
+        : range.end.difference(range.start).inDays;
+    final newTotal = (quote['new_total'] is num)
+        ? (quote['new_total'] as num).toInt()
+        : 0;
+    final diff = (quote['diff'] is num)
+        ? (quote['diff'] as num).toDouble()
+        : 0.0;
+    final balanceDue = (quote['balance_due'] is num)
+        ? (quote['balance_due'] as num).toDouble()
+        : 0.0;
+    final diffLine = diff > 0
+        ? '+${_formatPrice(diff.abs().toInt())} extra'
+            '${balanceDue > 0 ? ' — payable at the property' : ''}'
+        : diff < 0
+            ? '−${_formatPrice(diff.abs().toInt())} (refunds via support)'
+            : 'No price change';
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
+        title: const Text('Confirm date change',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _quoteRow('Current', (b['dates'] ?? '—').toString()),
+            _quoteRow('New',
+                '${_fmtDay(range.start)} → ${_fmtDay(range.end)}'),
+            _quoteRow('Nights', '$nights'),
+            _quoteRow('New total', _formatPrice(newTotal)),
+            _quoteRow('Difference', diffLine),
+            const SizedBox(height: 8),
+            Text(
+              (quote['message'] ?? '').toString(),
+              style: const TextStyle(
+                  fontSize: 12.5, color: _muted, height: 1.45),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child:
+                const Text('Back', style: TextStyle(color: _muted)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _blue,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(0)),
+            ),
+            child: const Text('Move booking',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+
+    _showWorking(context);
+    final result = await ApiService.rescheduleApply(
+        id, _isoDay(range.start), _isoDay(range.end));
+    if (!context.mounted) return;
+    Navigator.pop(context);
+    if (result != null && result['status'] == 'success') {
+      await context.read<BookingsProvider>().refresh();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text((result['message']?.toString().isNotEmpty ??
+                        false)
+                    ? result['message'].toString()
+                    : 'Booking moved to the new dates.'),
+          ),
+        );
+      Navigator.pop(context);
+    } else {
+      final msg = (result?['message']?.toString().isNotEmpty ?? false)
+          ? result!['message'].toString()
+          : (ApiService.lastError ?? 'Could not move the booking.');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
+    }
+  }
+
+  Widget _quoteRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 88,
+            child: Text(label,
+                style: const TextStyle(fontSize: 12.5, color: _faint)),
+          ),
+          Expanded(
+            child: Text(value,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _ink)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _isoDay(DateTime d) {
+    return '${d.year.toString().padLeft(4, '0')}-'
+        '${d.month.toString().padLeft(2, '0')}-'
+        '${d.day.toString().padLeft(2, '0')}';
+  }
+
+  String _fmtDay(DateTime d) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${months[d.month - 1]} ${d.day}, ${d.year}';
+  }
+
+  /// True once the stay's check-in day has arrived (cached rows without
+  /// dates never qualify).
+  bool _arrivalDue(Map<String, dynamic> b) {
+    final day = _checkinDay(b);
+    if (day == null) return false;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return !day.isAfter(today);
+  }
+
   Future<void> _cancelBooking(
       BuildContext context, Map<String, dynamic> b) async {
     final id = b['id'];
@@ -184,7 +608,7 @@ class BookingDetailsScreen extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
         title: const Text('Cancel this stay?',
             style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
         content: Text(
@@ -199,11 +623,11 @@ class BookingDetailsScreen extends StatelessWidget {
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFB81922),
+              backgroundColor: _redFg,
               foregroundColor: Colors.white,
               elevation: 0,
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
+                  borderRadius: BorderRadius.circular(0)),
             ),
             child: const Text('Cancel stay',
                 style: TextStyle(fontWeight: FontWeight.w700)),
@@ -254,6 +678,10 @@ class BookingDetailsScreen extends StatelessWidget {
         backgroundColor: Colors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(1),
+          child: Divider(height: 1, thickness: 1, color: _border),
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded, color: _ink),
           onPressed: () => Navigator.pop(context),
@@ -268,7 +696,7 @@ class BookingDetailsScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(0),
               child: Stack(
                 children: [
                   SizedBox(
@@ -288,7 +716,7 @@ class BookingDetailsScreen extends StatelessWidget {
                           horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
                         color: colors.bg,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(0),
                       ),
                       child: Text(
                         status.toUpperCase(),
@@ -308,7 +736,7 @@ class BookingDetailsScreen extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(0),
                 border: Border.all(color: _border),
               ),
               child: Column(
@@ -374,8 +802,8 @@ class BookingDetailsScreen extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFE8F0FE),
-                borderRadius: BorderRadius.circular(12),
+                color: _blueTint,
+                borderRadius: BorderRadius.circular(0),
               ),
               child: const Row(
                 children: [
@@ -392,47 +820,63 @@ class BookingDetailsScreen extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            if (tab == 'upcoming') ...[
+              _checkinCard(context, b, status),
+              const SizedBox(height: 16),
+            ] else
+              const SizedBox(height: 4),
             if (tab == 'cancelled')
               _primaryBtn(context,
                   label: 'Book again',
                   icon: Icons.refresh_rounded,
                   onTap: () => _rebook(context, b))
             else if (tab == 'completed')
-              Row(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                      child: _outlineBtn(context,
-                          label: 'Receipt',
-                          icon: Icons.receipt_outlined,
-                          onTap: () => _openReceipt(context, b))),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: _primaryBtn(context,
-                          label: 'Review',
-                          icon: Icons.star_outline_rounded,
-                          onTap: () => _openReview(context, b))),
+                  _actionPair([
+                    _outlineBtn(context,
+                        label: 'Receipt',
+                        icon: Icons.receipt_outlined,
+                        onTap: () => _openReceipt(context, b)),
+                    _primaryBtn(context,
+                        label: 'Review',
+                        icon: Icons.star_outline_rounded,
+                        onTap: () => _openReview(context, b)),
+                  ]),
+                  const SizedBox(height: 10),
+                  _outlineBtn(context,
+                      label: 'Message property',
+                      icon: Icons.chat_bubble_outline_rounded,
+                      onTap: () => _messageHost(context, b)),
                 ],
               )
             else
               Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      if (b['id'] is int)
-                        Expanded(
-                            child: _dangerBtn(context,
-                                label: 'Cancel stay',
-                                onTap: () => _cancelBooking(context, b))),
-                      if (b['id'] is int) const SizedBox(width: 10),
-                      Expanded(
-                          child: _outlineBtn(context,
-                              label: 'Receipt',
-                              icon: Icons.receipt_outlined,
-                              onTap: () => _openReceipt(context, b))),
-                    ],
-                  ),
+                  _actionPair([
+                    if (b['id'] is int)
+                      _dangerBtn(context,
+                          label: 'Cancel stay',
+                          onTap: () => _cancelBooking(context, b)),
+                    _outlineBtn(context,
+                        label: 'Receipt',
+                        icon: Icons.receipt_outlined,
+                        onTap: () => _openReceipt(context, b)),
+                  ]),
+                  const SizedBox(height: 10),
+                  _actionPair([
+                    _outlineBtn(context,
+                        label: 'Message property',
+                        icon: Icons.chat_bubble_outline_rounded,
+                        onTap: () => _messageHost(context, b)),
+                    _outlineBtn(context,
+                        label: 'Change dates',
+                        icon: Icons.edit_calendar_outlined,
+                        onTap: () => _requestChange(context, b)),
+                  ]),
                   if (status.toLowerCase() == 'completed' ||
                       tab == 'completed') ...[
                     const SizedBox(height: 10),
@@ -443,9 +887,228 @@ class BookingDetailsScreen extends StatelessWidget {
                   ],
                 ],
               ),
+            const SizedBox(height: 16),
+            Center(
+              child: GestureDetector(
+                onTap: () => _openSupport(context),
+                child: const Text.rich(
+                  TextSpan(
+                    style: TextStyle(fontSize: 12.5, color: _muted),
+                    children: [
+                      TextSpan(text: 'Need help with this stay? '),
+                      TextSpan(
+                        text: 'Visit the help center',
+                        style: TextStyle(
+                          color: _blue,
+                          fontWeight: FontWeight.w700,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  /// Check-in day (date only) from the synced ISO timestamp, if present.
+  DateTime? _checkinDay(Map<String, dynamic> b) {
+    final iso = (b['check_in']?.toString() ?? '').trim();
+    if (iso.isEmpty) return null;
+    final parsed = DateTime.tryParse(iso);
+    if (parsed == null) return null;
+    return DateTime(parsed.year, parsed.month, parsed.day);
+  }
+
+  /// Always-visible check-in guide (upcoming stays): first-time guests see
+  /// exactly what check-in involves and when it opens; on the day, the
+  /// arrival button notifies the host. States: checked-in / open / countdown.
+  Widget _checkinCard(
+      BuildContext context, Map<String, dynamic> b, String status) {
+    final checkedIn = status.toLowerCase().contains('check');
+    final due = _arrivalDue(b);
+    final inDay = _checkinDay(b);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    late final String title;
+    late final String sub;
+    late final Color accent;
+    late final Color tint;
+    late final IconData icon;
+    String? chip;
+    if (checkedIn) {
+      title = 'Checked in — enjoy your stay';
+      sub =
+          'Your host has confirmed your arrival. For anything during your stay, message the property from the buttons below.';
+      accent = _greenFg;
+      tint = _greenBg;
+      icon = Icons.check_circle_rounded;
+    } else if (due) {
+      title = 'Check-in is open';
+      sub =
+          'You can arrive from today. Notify the property, then show your receipt QR code and a photo ID at the front desk.';
+      accent = _blue;
+      tint = _blueTint;
+      icon = Icons.flight_land_rounded;
+    } else if (inDay != null) {
+      final days = inDay.difference(today).inDays;
+      title = 'Check-in opens ${_fmtDay(inDay)}';
+      sub =
+          'Your stay starts ${days <= 1 ? 'tomorrow' : 'in $days days'}. Come back on the day and notify the property from here.';
+      accent = _amberFg;
+      tint = _amberBg;
+      icon = Icons.schedule_rounded;
+      chip = days <= 1 ? 'Opens tomorrow' : '$days days to go';
+    } else {
+      title = 'Check-in';
+      sub =
+          'Pull to refresh your bookings to load the check-in date, then notify the property on arrival day.';
+      accent = _muted;
+      tint = const Color(0xFFE8E8E8);
+      icon = Icons.info_outline_rounded;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(0),
+        border: Border.all(color: _border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration:
+                    BoxDecoration(color: tint, shape: BoxShape.circle),
+                child: Icon(icon, size: 22, color: accent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: _ink,
+                            height: 1.25)),
+                    if (chip != null) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: tint,
+                          borderRadius: BorderRadius.circular(0),
+                        ),
+                        child: Text(chip,
+                            style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                                color: accent)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(sub,
+              style: const TextStyle(
+                  fontSize: 13, color: _muted, height: 1.5)),
+          if (!checkedIn) ...[
+            const SizedBox(height: 12),
+            _checkinStep('1',
+                'On arrival day, tap “I’ve arrived” to notify the property.'),
+            const SizedBox(height: 8),
+            _checkinStep('2',
+                'Show your receipt QR code and a photo ID at the front desk.'),
+            const SizedBox(height: 8),
+            _checkinStep(
+                '3', 'The host confirms — your stay flips to Checked In.'),
+          ],
+          if (due && !checkedIn) ...[
+            const SizedBox(height: 14),
+            _primaryBtn(context,
+                label: "I've arrived — notify host",
+                icon: Icons.flight_land_rounded,
+                onTap: () => _arrivalNotice(context, b)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _checkinStep(String number, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(
+            color: _ink,
+            shape: BoxShape.circle,
+          ),
+          child: Text(number,
+              style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white)),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Text(text,
+                style: const TextStyle(
+                    fontSize: 13, color: _ink, height: 1.45)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Two action buttons side by side on normal phones, stacked full-width
+  /// on narrow screens (< 360 logical pixels) so labels never clip.
+  Widget _actionPair(List<Widget> buttons) {
+    assert(buttons.isNotEmpty);
+    if (buttons.length == 1) return buttons.first;
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        if (constraints.maxWidth < 360) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              buttons[0],
+              const SizedBox(height: 10),
+              buttons[1],
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: buttons[0]),
+            const SizedBox(width: 10),
+            Expanded(child: buttons[1]),
+          ],
+        );
+      },
     );
   }
 
@@ -480,7 +1143,7 @@ class BookingDetailsScreen extends StatelessWidget {
   Widget _primaryBtn(BuildContext context,
       {required String label, IconData? icon, required VoidCallback onTap}) {
     return SizedBox(
-      height: 50,
+      height: 48,
       child: ElevatedButton(
         onPressed: () {
           HapticFeedback.selectionClick();
@@ -491,7 +1154,7 @@ class BookingDetailsScreen extends StatelessWidget {
           foregroundColor: Colors.white,
           elevation: 0,
           shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -513,7 +1176,7 @@ class BookingDetailsScreen extends StatelessWidget {
   Widget _outlineBtn(BuildContext context,
       {required String label, IconData? icon, required VoidCallback onTap}) {
     return SizedBox(
-      height: 50,
+      height: 48,
       child: OutlinedButton(
         onPressed: () {
           HapticFeedback.selectionClick();
@@ -523,7 +1186,7 @@ class BookingDetailsScreen extends StatelessWidget {
           foregroundColor: _ink,
           side: const BorderSide(color: _border),
           shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
           backgroundColor: Colors.white,
         ),
         child: Row(
@@ -546,17 +1209,17 @@ class BookingDetailsScreen extends StatelessWidget {
   Widget _dangerBtn(BuildContext context,
       {required String label, required VoidCallback onTap}) {
     return SizedBox(
-      height: 50,
+      height: 48,
       child: OutlinedButton(
         onPressed: () {
           HapticFeedback.selectionClick();
           onTap();
         },
         style: OutlinedButton.styleFrom(
-          foregroundColor: const Color(0xFFB81922),
-          side: const BorderSide(color: Color(0xFFFECACA)),
+          foregroundColor: _redFg,
+          side: const BorderSide(color: Color(0xFFF4C7C7)),
           shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(0)),
           backgroundColor: Colors.white,
         ),
         child: Text(label,

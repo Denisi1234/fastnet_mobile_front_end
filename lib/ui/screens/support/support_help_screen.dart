@@ -20,7 +20,7 @@ class _SupportHelpScreenState extends State<SupportHelpScreen> {
   final List<Map<String, String>> _faqs = [
     {
       'question': 'How do I check in to my lodge?',
-      'answer': 'Go to the "My Bookings" section from your profile. Once your check-in date arrives, click the "Check In" button to activate in-stay services.'
+      'answer': 'Check-in is confirmed by your host at the property. Open My Bookings, choose your stay, then Receipt, and show the QR code on your confirmation along with a valid photo ID matching the lead guest name. Standard check-in is from 2:00 PM — message the property ahead for early arrival.'
     },
     {
       'question': 'Can I request a refund for a cancellation?',
